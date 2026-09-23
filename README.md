@@ -13,8 +13,8 @@ Sonnet as blind, independent voters, with optional opt-in GPT or Gemini seats. I
 verdict built to be neither a yes-man nor a reflexive no-man:
 
 - **Your opinion never reaches a voter.** A separate framer rewrites the request as a neutral
-  question with symmetric options. Every belief you stated becomes a third-person claim, and the
-  council checks each one with tools.
+  question with symmetric, shuffled options. Every belief you stated becomes a neutral claim to check,
+  attributed to nobody, and the council checks it with tools.
 - **Blind first, debate only when it earns its cost.** Extra seats, claim verification, one critique
   round and a red team run only on measured signals: a split vote, low confidence, unverified
   load-bearing claims, or unanimous agreement with you.
@@ -52,6 +52,55 @@ workflow it first loaded, so edits don't reach sessions that are already open.
 `--outside` adds non-Claude seats through a locally authenticated `opencode` or `gemini` CLI.
 It is opt-in per run because it sends the neutral question and context summary to a third-party
 provider. See `council/references/outside-seats.md`.
+
+### Modes
+
+| | quick | standard (default) | deep |
+|---|---|---|---|
+| Blind seats | Fable, Opus, Sonnet (medium effort) | Fable, Opus, Sonnet (high effort), plus a 4th seat if the vote splits | the three, plus an Opus "outsider" that gets no background and a Fable "forecaster" |
+| Claims checked with tools | up to 3 | up to 5 | up to 10, each by 2 checkers |
+| Debate rounds | none | at most 1, only if the vote is still split | at most 2 |
+| Red team | only when unanimously agreeing with you on a high-stakes call | when unanimous and agreeing with you, high stakes, or resting on unchecked claims | every run |
+| Chair and audit | Sonnet chair; audit when the verdict disagrees with you, overrides the majority or rests on a claim shown false | Opus chair; same audit triggers | Fable chair at xhigh effort; audit every run |
+| Typical run | 5–10 agents | 9–18 agents | 18–30 agents, 20+ minutes |
+
+### The deepest council
+
+In any session, from any directory:
+
+```
+/council deep <your question>
+```
+
+With ultracode on, plain `/council` runs deep automatically. From a terminal, start the session with it:
+
+```bash
+claude --effort ultracode
+```
+
+For the widest council, also add seats from other model families:
+
+```
+/council deep --outside=opencode/gpt-5.5,opencode/gemini-3.1-pro <your question>
+```
+
+Seats from different model families are the strongest guard against the whole council sharing one
+blind spot. But this sends the neutral question and a summary of the context to OpenCode Zen, billed
+to your account, and it is opt-in per run. The outside-seat path has not yet been tested against a
+live provider. If a seat fails, the report shows it as absent; nothing is substituted.
+
+To get the most out of it:
+
+- **About code:** start the session in that repo and say so ("in this repo, is X safe?"). The
+  council can then read the code. In any other directory it is told to leave the files alone, so an
+  unrelated repo is never mistaken for your system.
+- **Include what you know:** versions, measurements, what you have tried. Say what you think too.
+  The framer removes your opinion before any voter sees it, and the claims you make get checked.
+- **Don't add a small token budget:** anything under 400k tokens drops the run out of deep mode.
+  With no budget there is no limit.
+- **Expect it to take a while:** a deep run is 18–30 agents and often 20+ minutes. It runs in the
+  background, and the report appears when it finishes.
+- **If `council-run` is not found:** run `./install.sh` in this repo and open a new session.
 
 ## Layout
 
