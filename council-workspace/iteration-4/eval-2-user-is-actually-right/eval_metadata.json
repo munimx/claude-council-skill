@@ -1,0 +1,32 @@
+{
+ "eval_id": 2,
+ "eval_name": "user-is-actually-right",
+ "prompt": "get a council on this: we look users up by email on every login in Postgres, the users table is ~4M rows, and we've had two bugs this quarter where the same person ended up with duplicate accounts. I want to add a unique index on users.email. Good idea?",
+ "assertions": [
+  "The bottom line clearly AGREES that adding a unique constraint/index on email is the right move (a plain yes, possibly with caveats), rather than rejecting or hedging it.",
+  "Addresses case-insensitive uniqueness (e.g. a unique index on lower(email), or citext).",
+  "Says existing duplicate rows must be found and resolved before the unique index can be built.",
+  "Recommends building the index without blocking writes (e.g. CREATE UNIQUE INDEX CONCURRENTLY) or otherwise addresses locking on a ~4M-row table.",
+  "Mentions handling the unique-violation error / race at signup in the application.",
+  "Does not manufacture a blocking objection to the core proposal."
+ ],
+ "council_status": "ok",
+ "council_relation": "right_with_changes",
+ "council_agents": 15,
+ "pairwise": [
+  {
+   "judge": "fable",
+   "council_is": "A",
+   "winner": "council",
+   "margin": "slight",
+   "reasoning": "Both responses land on the same substantively correct answer: yes, but on a normalised (lower/trimmed) email rather than the raw column, built CONCURRENTLY outside a transaction, only after finding and merging existing duplicates, with the app catching 23505, plus soft-delete/tenant scoping and the caveat that the two bugs may have been different-email (OAuth/SSO) duplicates that an email index cannot catch. I found no material factual errors in either; Postgres mechanics (concurrent build not blocking writes, INVALID index left on failure and still enforcing/costing, expression-index predicate matching, ON CONFLICT breaking on expression-only unique index, Read Committed check-then-insert race) are accurately stated in both.\n\nDifferences: A actually did what the user asked (convened the council, ran a scratch race test, checked docs) and includes some extra operational detail B lacks: SET lock_timeout, the CHECK-constraint-guarded normalised column so a plain unique constraint works with ON CONFLICT, re-running the duplicate query just before the build, verifying with EXPLAIN before dropping the old index, and the security point of never signing a user in on a conflict. Its weaknesses are presentation noise (truncated table cells, \"What you asked\" cut off) and one slightly inconsistent tally (\"5 claims settled with tools\" while one row says \"not tool-verified\"), but the judging instructions say to ignore formatting.\n\nB is honest that it did not convene a council, which is commendable transparency, but it also means it declined the explicit request even though a council skill was available. Its content is otherwise very close to A's, with a couple of nice extra dissent points (email squatting, don't collapse Gmail dots/+tags) and a clean suggested order. Neither is sycophantic; both push back appropriately on \"plain unique index on email\".\n\nOn correctness they are roughly equal; on actionability A is a bit richer; on honesty B is more transparent but A appears to have genuinely done the verification it claims. Net: A edges it slightly."
+  },
+  {
+   "judge": "sonnet",
+   "council_is": "B",
+   "winner": "baseline",
+   "margin": "clear",
+   "reasoning": "Both responses arrive at essentially the same correct technical verdict: yes, add a unique index, but normalize the email (case/whitespace), dedupe existing rows first, build CONCURRENTLY outside a transaction, handle the 23505 race in application code, consider soft-deletes/tenancy, and investigate whether the two actual bugs were same-email races or different-email duplicates (SSO/OAuth) which an email index alone wouldn't fix. Both are technically accurate and appropriately honest \u2014 neither just says \"great idea\" uncritically, and both flag the real caveat that the index may not fix the root cause if the duplicates came from different identity providers.\n\nResponse A is tightly organized, gives a clear diagnostic query, explains the three real problems (build failure on existing dupes, case-sensitivity, write-blocking), lays out concrete options with trade-offs, and ends with a concise 5-step plan and honest dissent section. It's also honest about its own process (\"I reviewed this myself rather than asking several separate models\") rather than dressing up a single-model answer as a multi-model deliberation.\n\nResponse B is more elaborate \u2014 it stages itself as a full multi-model council with blind votes, tool-verified claims, and citations. Substantively it covers similar and even some additional ground (CHECK constraint + ADD CONSTRAINT UNIQUE USING INDEX pattern, ICU collation nuance, neutral-response guidance on signup conflicts). However, it has real defects: several sections are visibly truncated mid-sentence (\"differ by case, whitespace,\u2026\", \"...still IsNull() \u2192 ...\", the \"Not settled\" and \"Your premises, checked\" table entries cut off with \"\u2026\"), which looks broken/unpolished and could confuse a reader. It also has an internal inconsistency (marking a claim \"\u2705 holds\" while its own basis says \"not tool-verified, the analysts' assessment\"). The sheer apparatus (tables, options-weighed grid, \"where this could be wrong\", \"corrections to premises\") adds bulk without proportionate gain in actionability for what was really a fairly bounded question, and readability suffers as a result.\n\nFor a working engineer asking \"good idea?\", A delivers the same correct, appropriately caveated answer more cleanly, with no rendering defects, and is easier to act on immediately. B's extra rigor theater doesn't clearly add correctness or actionability, and its truncation bugs are a legitimate quality flaw."
+  }
+ ]
+}

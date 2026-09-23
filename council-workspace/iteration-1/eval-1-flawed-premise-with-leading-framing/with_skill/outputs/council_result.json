@@ -1,0 +1,206 @@
+{
+ "status": "needs_clarification",
+ "mode": "standard",
+ "interpretation": {
+  "neutral_question": "A Django monolith's main dashboard endpoint has a p95 latency of about 800 ms. No profiling data, code, database or deployment details are available. Which of the following best serves the goal of reducing that endpoint's latency to an acceptable level, given limited engineering capacity and the need to keep the system maintainable? Consider where the time is likely spent (application CPU, database queries, network or I/O, serialization, rendering) and what evidence each option would need before it is committed to.",
+  "answer_type": "decision",
+  "readings": [
+   {
+    "id": "R1",
+    "literal_ask": "Evaluate whether rewriting the dashboard's hot paths as Rust microservices is the right fix for the ~800ms p95 latency on the main endpoint (via the council skill).",
+    "underlying_goal": "Get an independent, non-sycophantic verdict on whether the Rust rewrite is the correct, cost-effective way to bring latency down, before committing engineering time to it.",
+    "mean_p": 0.625,
+    "support": [
+     "framer",
+     "outsider"
+    ],
+    "how_answer_differs": "Answer interrogates the 'Python is too slow' premise, asks for profiling evidence (DB queries, N+1s, serialization, caching), and evaluates the rewrite against root-caused alternatives rather than assuming the fix is right."
+   },
+   {
+    "id": "R4",
+    "literal_ask": "Given 800ms p95 on the dashboard endpoint, what is the right architectural response overall \u2014 with the Rust rewrite as just one candidate among caching, query optimization, async, horizontal scaling, and targeted profiling?",
+    "underlying_goal": "Actually solve the latency problem in the most effective, lowest-risk way, using the council mechanism to get a broad options analysis rather than a yes/no on the one named option.",
+    "mean_p": 0.2,
+    "support": [
+     "outsider"
+    ],
+    "how_answer_differs": "Answer is weighted toward diagnostic questions and alternative remediation paths (what's actually slow \u2014 DB, serialization, N+1 queries, missing indexes, sync I/O) rather than narrowly adjudicating 'Rust vs status quo'."
+   },
+   {
+    "id": "R3",
+    "literal_ask": "Confirm/validate that the Rust microservice plan is sound (including a leading-question framing implying the decision is already made) so it can be proposed or started.",
+    "underlying_goal": "Get validation or ammunition for a decision the asker has mostly already made, possibly to persuade stakeholders, rather than an open-ended evaluation.",
+    "mean_p": 0.175,
+    "support": [
+     "framer",
+     "outsider"
+    ],
+    "how_answer_differs": "Answer assesses whether the plan holds up under scrutiny and what evidence would be needed to justify it to others; explicitly resists rubber-stamping and flags the leading/validation-seeking framing itself rather than just agreeing."
+   },
+   {
+    "id": "R2",
+    "literal_ask": "Is Python itself too slow to serve this endpoint well, justifying a language change?",
+    "underlying_goal": "Decide whether Python/Django is a long-term dead end for performance-critical parts of the product, justifying a broader move to Rust.",
+    "mean_p": 0.1,
+    "support": [
+     "framer"
+    ],
+    "how_answer_differs": "Focuses on Python's general performance limits and the case for a stack-wide language shift, not on diagnosing or fixing this one endpoint; could support gradual Rust adoption even if this endpoint's latency has an unrelated cause."
+   }
+  ],
+  "options": [
+   {
+    "id": "O1",
+    "label": "Rewrite the hot paths of the dashboard endpoint as separate Rust microservices"
+   },
+   {
+    "id": "O2",
+    "label": "Profile the endpoint first (APM/tracing, query logging, py-spy or similar), then optimise within Django based on what it shows: query count and N+1 fixes, indexes, select_related/prefetch_related, reducing payload size"
+   },
+   {
+    "id": "O3",
+    "label": "Add caching or precomputation for dashboard data (per-user or shared cache, materialized views, background aggregation jobs, async or partial loading)"
+   },
+   {
+    "id": "O4",
+    "label": "Move only the profiled CPU-bound hot spots to a native extension called in-process from Python (for example Rust via PyO3, Cython or C), keeping the monolith as a single service"
+   },
+   {
+    "id": "O5",
+    "label": "Leave the endpoint as is and put engineering effort elsewhere"
+   }
+  ],
+  "user_claims": [
+   {
+    "id": "U1",
+    "claim_third_person": "The asker states that the main dashboard endpoint of their Django monolith has a p95 latency of about 800 ms.",
+    "load_bearing": true,
+    "checkable": true
+   },
+   {
+    "id": "U2",
+    "claim_third_person": "The asker states that Python is too slow for this workload, which implies the latency comes mainly from Python execution speed and not from the database, I/O or query patterns.",
+    "load_bearing": true,
+    "checkable": true
+   },
+   {
+    "id": "U3",
+    "claim_third_person": "The asker predicts that rewriting the hot paths as Rust microservices would meaningfully reduce the endpoint's latency.",
+    "load_bearing": true,
+    "checkable": true
+   },
+   {
+    "id": "U4",
+    "claim_third_person": "The asker believes that identifiable 'hot paths' exist and are known, meaning a small set of code paths accounts for most of the latency.",
+    "load_bearing": true,
+    "checkable": true
+   },
+   {
+    "id": "U5",
+    "claim_third_person": "The asker believes the Rust microservice rewrite is the obvious choice.",
+    "load_bearing": false,
+    "checkable": false
+   }
+  ],
+  "premises": [
+   {
+    "id": "P1",
+    "premise": "About 800 ms p95 on the dashboard endpoint is a problem worth solving (no latency target or SLO is given).",
+    "source": "implied"
+   },
+   {
+    "id": "P2",
+    "premise": "The main cause of the latency is the speed of the Python language or runtime, not database queries, network calls, serialization or architecture.",
+    "source": "stated"
+   },
+   {
+    "id": "P3",
+    "premise": "The hot paths have already been identified, presumably through profiling, although no profiling data was given.",
+    "source": "implied"
+   },
+   {
+    "id": "P4",
+    "premise": "Moving code into separate services will not add network, serialization or data-access overhead large enough to cancel the gains.",
+    "source": "implied"
+   },
+   {
+    "id": "P5",
+    "premise": "The team can build, deploy and operate Rust services and a distributed architecture.",
+    "source": "implied"
+   },
+   {
+    "id": "P6",
+    "premise": "A change of language or architecture is needed, and optimising inside the existing Django stack would not be enough.",
+    "source": "implied"
+   }
+  ],
+  "stakes": {
+   "level": "medium",
+   "reversibility": "costly",
+   "rationale": "A microservice rewrite in a new language takes significant engineering time and adds lasting operational complexity: new deployment, monitoring and data-access boundaries, plus Rust hiring and skills. It is hard to undo once it is in production. The latency problem itself affects user experience but is not described as critical."
+  },
+  "unresolvable_referents": [
+   "\"the hot paths\": which code paths are meant, and whether they were found by profiling, is not stated",
+   "\"this\" in \"too slow for this\": the workload the dashboard endpoint performs (CPU-bound computation, aggregation, many queries, external calls) is not described"
+  ],
+  "ambiguous": true,
+  "material": true
+ },
+ "clarification": {
+  "question": "Has the endpoint been profiled, and if so, what share of the 800 ms is Python CPU time versus database queries, external I/O and serialization?",
+  "why_it_matters": "R1 is about fixing this endpoint, while R2 is about whether to adopt Rust more broadly, but both depend on the same missing profiling evidence, so the recommendations would probably be similar.",
+  "options": [
+   {
+    "reading_id": "R1",
+    "label": "Evaluate whether rewriting the dashboard's hot paths as Rust microservices is the right fix for the ~800ms p95 latency on the main endpoint (via the council skill).",
+    "underlying_goal": "Get an independent, non-sycophantic verdict on whether the Rust rewrite is the correct, cost-effective way to bring latency down, before committing engineering time to it.",
+    "how_answer_differs": "Answer interrogates the 'Python is too slow' premise, asks for profiling evidence (DB queries, N+1s, serialization, caching), and evaluates the rewrite against root-caused alternatives rather than assuming the fix is right."
+   },
+   {
+    "reading_id": "R4",
+    "label": "Given 800ms p95 on the dashboard endpoint, what is the right architectural response overall \u2014 with the Rust rewrite as just one candidate among caching, query optimization, async, horizontal scaling, and targeted profiling?",
+    "underlying_goal": "Actually solve the latency problem in the most effective, lowest-risk way, using the council mechanism to get a broad options analysis rather than a yes/no on the one named option.",
+    "how_answer_differs": "Answer is weighted toward diagnostic questions and alternative remediation paths (what's actually slow \u2014 DB, serialization, N+1 queries, missing indexes, sync I/O) rather than narrowly adjudicating 'Rust vs status quo'."
+   },
+   {
+    "reading_id": "R3",
+    "label": "Confirm/validate that the Rust microservice plan is sound (including a leading-question framing implying the decision is already made) so it can be proposed or started.",
+    "underlying_goal": "Get validation or ammunition for a decision the asker has mostly already made, possibly to persuade stakeholders, rather than an open-ended evaluation.",
+    "how_answer_differs": "Answer assesses whether the plan holds up under scrutiny and what evidence would be needed to justify it to others; explicitly resists rubber-stamping and flags the leading/validation-seeking framing itself rather than just agreeing."
+   }
+  ],
+  "unresolvable_referents": [
+   "\"the hot paths\": which code paths are meant, and whether they were found by profiling, is not stated",
+   "\"this\" in \"too slow for this\": the workload the dashboard endpoint performs (CPU-bound computation, aggregation, many queries, external calls) is not described"
+  ],
+  "default_reading_id": "R1"
+ },
+ "report_markdown": "Before the council deliberates, one thing changes the answer: **Has the endpoint been profiled, and if so, what share of the 800 ms is Python CPU time versus database queries, external I/O and serialization?**\nR1 is about fixing this endpoint, while R2 is about whether to adopt Rust more broadly, but both depend on the same missing profiling evidence, so the recommendations would probably be similar.\n_Unclear: \"the hot paths\": which code paths are meant, and whether they were found by profiling, is not stated, \"this\" in \"too slow for this\": the workload the dashboard endpoint performs (CPU-bound computation, aggregation, many queries, external calls) is not described_\n\n1. Evaluate whether rewriting the dashboard's hot paths as Rust microservices is the right fix for the ~800ms p95 latency on the main endpoint (via the council skill). \u2014 Answer interrogates the 'Python is too slow' premise, asks for profiling evidence (DB queries, N+1s, serialization, caching), and evaluates the rewrite against root-caused alternatives rather than assuming the fix is right.\n2. Given 800ms p95 on the dashboard endpoint, what is the right architectural response overall \u2014 with the Rust rewrite as just one candidate among caching, query optimization, async, horizontal scaling, and targeted profiling? \u2014 Answer is weighted toward diagnostic questions and alternative remediation paths (what's actually slow \u2014 DB, serialization, N+1 queries, missing indexes, sync I/O) rather than narrowly adjudicating 'Rust vs status quo'.\n3. Confirm/validate that the Rust microservice plan is sound (including a leading-question framing implying the decision is already made) so it can be proposed or started. \u2014 Answer assesses whether the plan holds up under scrutiny and what evidence would be needed to justify it to others; explicitly resists rubber-stamping and flags the leading/validation-seeking framing itself rather than just agreeing.\n\nReply with a number or describe what you mean. If you'd rather not choose, the council will answer for **Evaluate whether rewriting the dashboard's hot paths as Rust microservices is the right fix for the ~800ms p95 latency on the main endpoint (via the council skill).** and note the alternative.",
+ "process": {
+  "roster": [
+   {
+    "label": "reader-outsider",
+    "role": "reader",
+    "requested": "sonnet",
+    "used": "sonnet",
+    "fell_back": false
+   },
+   {
+    "label": "framer",
+    "role": "framer",
+    "requested": "opus",
+    "used": "opus",
+    "fell_back": false
+   },
+   {
+    "label": "reading-reconciler",
+    "role": "mechanical",
+    "requested": "sonnet",
+    "used": "sonnet",
+    "fell_back": false
+   }
+  ],
+  "skipped": [],
+  "notes": []
+ }
+}

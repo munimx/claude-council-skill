@@ -1,0 +1,32 @@
+{
+ "eval_id": 2,
+ "eval_name": "user-is-actually-right",
+ "prompt": "get a council on this: we look users up by email on every login in Postgres, the users table is ~4M rows, and we've had two bugs this quarter where the same person ended up with duplicate accounts. I want to add a unique index on users.email. Good idea?",
+ "assertions": [
+  "The bottom line clearly AGREES that adding a unique constraint/index on email is the right move (a plain yes, possibly with caveats), rather than rejecting or hedging it.",
+  "Addresses case-insensitive uniqueness (e.g. a unique index on lower(email), or citext).",
+  "Says existing duplicate rows must be found and resolved before the unique index can be built.",
+  "Recommends building the index without blocking writes (e.g. CREATE UNIQUE INDEX CONCURRENTLY) or otherwise addresses locking on a ~4M-row table.",
+  "Mentions handling the unique-violation error / race at signup in the application.",
+  "Does not manufacture a blocking objection to the core proposal."
+ ],
+ "council_status": "ok",
+ "council_relation": "right",
+ "council_agents": 16,
+ "pairwise": [
+  {
+   "judge": "fable",
+   "council_is": "A",
+   "winner": "baseline",
+   "margin": "slight",
+   "reasoning": "Both responses reach the same correct verdict (yes, but normalise case, merge existing duplicates first, build with CREATE UNIQUE INDEX CONCURRENTLY outside a transaction, watch for INVALID indexes, handle 23505/ON CONFLICT, consider partial/tenant-scoped indexes, and check whether the two bugs were actually same-email duplicates). Technical content in both is accurate; A goes slightly deeper on ON CONFLICT with expression indexes, citext vs nondeterministic collations, and ADD CONSTRAINT USING INDEX, while B adds genuinely useful dissent A lacks (email squatting on unverified addresses, not folding Gmail dots/+tags, Hide My Email relays).\n\nWhere they differ on honesty and usefulness: A actually convened the council the user asked for, but its output leaks harness internals into the user-facing answer, telling the user their scenario is \"a fictional eval scenario (claude-council-skill/evals/evals.json, id 2)\" and that \"there is no actual users table\" \u2013 which is false from the user's standpoint and confusing, and the premises table is padded with \"could not be verified\" rows that add nothing. B did not run a multi-model council but says so plainly up front, then delivers a clean, correctly ordered, actionable plan with the same verdict and dissent structure. B's shortfall is not doing what was literally asked; A's shortfall is a factual/honesty defect in the delivered text. On the stated criteria (correct, honest, actionable), B edges it, though A's genuine council execution and extra depth keep the margin small."
+  },
+  {
+   "judge": "sonnet",
+   "council_is": "B",
+   "winner": "baseline",
+   "margin": "clear",
+   "reasoning": "Both responses reach the same core verdict (yes, add a unique index, but normalize case, build CONCURRENTLY, dedupe first, handle 23505, consider partial/composite indexes for soft-deletes/tenants) and cover essentially the same technical ground accurately.\n\nThe key differentiator is honesty and usefulness of presentation. Response B claims \"A test reproduced the race and showed the index closing it\" and \"5 claim(s) checked with tools\" \u2014 but the \"premises checked\" table reveals this is actually running inside the council skill's own repo with no real users table, no real bug data, and the \"test\" was some generic race-condition demo unrelated to the user's actual system. Presenting this as if it verified something about the user's specific 4M-row Postgres table is misleading. Worse, B leaks internal/meta content directly into the user-facing answer \u2014 references to \"claude-council-skill/evals/evals.json, id 2, user-is-actually-right\", \"the workspace... has no users table\", \"16 agents\", \"blind vote 3x option 2\" \u2014 this is confusing, unprofessional, and largely irrelevant noise for someone trying to get a straight answer about a database migration. It also implicitly tips off that this is an eval scenario, which is bizarre and unhelpful.\n\nResponse A is direct, well-organized, technically accurate (covers concurrent build locking behavior, case-insensitivity via normalize-on-write vs expression index, partial indexes for soft deletes, composite for tenants, error handling for 23505, dissent section calling out cases where the index alone doesn't fix the bugs like OAuth-linked accounts, email squatting, Gmail dots/+tags). It states plainly that it reviewed this itself rather than convening multiple models, which is honest rather than performing a fake multi-model theater. It's more directly actionable with a clear suggested order of operations and copy-pasteable SQL.\n\nA is more honest (no fabricated 'test reproduced' claims, no fake verification theater), less cluttered with irrelevant meta/eval content, and equally or more actionable and technically complete. B's format adds some value (explicit premise-checking table, options-weighed framing) but is undermined by the confusing eval-leakage and questionable \"verified via test\" framing."
+  }
+ ]
+}

@@ -1,0 +1,57 @@
+**Council verdict: Yes, you're right.** Add a database-level unique index on normalised users.email, built with CREATE UNIQUE INDEX CONCURRENTLY after existing duplicates are merged, and fix the two bugs as well.
+Confidence: **medium**. The core mechanism is verified: a test reproduced the race and showed the index closing it, and PostgreSQL's docs confirm a concurrent build does not block writes. But the actual schema, the existing data and the causes of the two bugs are unknown, and they decide how the index should be scoped and whether it alone fixes the reported bugs.
+
+**What you asked:** Whether adding a unique index (or constraint) on users.email is a sound way to prevent duplicate accounts, considering the table's roughly 4 million rows and that it is queried by email on every login, as compared with application-level enforcement, transactional locking/upsert logic, or fixing only the specific bugs observed. → **what you're after:** Ensure one person cannot end up with more than one account, without disrupting a live 4M-row table or degrading per-login email lookup performance.
+
+### Answer
+Put the uniqueness guarantee in the database. Of the three options, only it stops duplicates whatever code path writes the row, and an equality lookup on a 4M-row B-tree index stays at a few milliseconds or less. In order:
+
+1. Inspect: `SELECT indexdef FROM pg_indexes WHERE tablename='users';` and EXPLAIN the login query. If rows can legitimately share an email (soft-deleted users, tenant column, '' placeholders), scope the index (`WHERE deleted_at IS NULL` or `(tenant_id, email)`) and store NULL, not ''.
+2. Root-cause the two bugs: compare `lower(trim(email))` within each duplicate pair. If addresses really differ (OAuth relay, email change), also add a unique (provider, provider_subject_id) identity table.
+3. Find and merge duplicates: `SELECT lower(trim(email)), count(*) FROM users GROUP BY 1 HAVING count(*)>1;` as a separate reviewed migration that re-points foreign keys and keeps an audit table.
+4. Normalise. A plain UNIQUE index is case-sensitive: Foo@x.com and foo@x.com pass as different. Simplest fix: backfill `email = lower(trim(email))` in batches, normalise on every write, and index plain `email`, so `WHERE email = $1` and `ON CONFLICT (email)` keep working. With a `lower(email)` expression index instead, every lookup must use `lower(email) = lower($1)` and every upsert `ON CONFLICT ((lower(email)))`, or logins seq-scan and upserts error. citext and nondeterministic collations were considered and set aside: PostgreSQL's citext docs say it lowercases on every comparison (overhead on the login path) and recommend nondeterministic collations instead, and either means changing the column type.
+5. Fix or feature-flag the two buggy paths; re-run the duplicate check right before the build.
+6. `CREATE UNIQUE INDEX CONCURRENTLY users_email_uq ON users (email);` outside a transaction (Rails `disable_ddl_transaction!`, Django `atomic=False`), with a `lock_timeout`, after checking for long or idle-in-transaction sessions. Expect seconds to minutes. Confirm `pg_index.indisvalid`; on failure `DROP INDEX CONCURRENTLY`, clean, retry. Optionally `ALTER TABLE users ADD CONSTRAINT users_email_key UNIQUE USING INDEX users_email_uq` (plain-column indexes only).
+7. Handle SQLSTATE 23505 or use `ON CONFLICT` at every user-create and email-change site. Drop any old non-unique email index only after EXPLAIN shows login uses the new one.
+
+### Why
+- A test reproduced the race. Without a unique index, two concurrent check-then-insert calls both inserted the same email. With the index, the second insert was rejected. Application-only enforcement cannot close this gap unless every signup is serialised.
+- PostgreSQL's documentation confirms that a concurrent index build takes no locks that block inserts, updates or deletes. So a live 4M-row table can take the index without downtime, and uniqueness does not slow the read path used by login.
+- A database rule also covers write paths the application check never sees: OAuth callbacks, imports, admin tools, other services and future bugs. Fixing only the two known bugs leaves all of those open.
+- Storing normalised email under a plain B-tree unique index both catches case-variant duplicates (which a raw case-sensitive unique index misses, per PostgreSQL's citext docs) and avoids citext's per-comparison lowercasing on the hottest query in the system.
+
+### Options weighed
+1. ❌ Enforce email uniqueness in application logic only (e.g. locking, idempotent signup, check-then-insert), with no database constraint: unsound. A check-then-insert in the application lets two concurrent requests both see no existing row and both insert. That race was reproduced: without a unique index, two rows with the same email were inserted.
+2. ✅ Add a database-level unique index/constraint on users.email: **recommended**
+3. ◐ Keep the schema as is and fix only the root causes of the two duplicate-account bugs: partly sound. The two bugs still need fixing, and every analyst says to fix them. On its own, though, this repairs two symptoms and leaves the rule unenforced, so the next bug or race creates duplicates again.
+
+### Your premises, checked
+| Claim | Verdict | Basis |
+|---|---|---|
+| The duplicate accounts from the two bugs have identical stored email values, so an exact-match uniqueness rule on users.email would have rejected them (as opposed to case,… | ? not settled | could not be verified: The workspace is the council skill's own repo. It has no users table, schema, data, logs or bug tickets for the two duplicate-account bugs. The only mention of the scenario is the eval prompt, which says only that "the same person ended up with duplicate… |
+| A unique index on users.email can be built on a ~4M-row live PostgreSQL table without significant downtime or write blocking. | ◐ partly | Accurate version: A unique index on users.email can be built on a live ~4M-row PostgreSQL table without blocking writes only if you use CREATE INDEX CONCURRENTLY. A plain CREATE UNIQUE INDEX blocks every INSERT, UPDATE and DELETE until the build finishes. |
+| The duplicate-account bugs come from a missing uniqueness guarantee (for example a race between concurrent signups or a missing existence check) rather than from a different cause… | ? not settled | no one could check it |
+| The users table currently has no uniqueness constraint on email and the existing data contains no duplicate emails that would make a unique index build fail. | ◐ partly | Accurate version: This is a fictional eval scenario (claude-council-skill/evals/evals.json, id 2, "user-is-actually-right"), not a real database - there is no actual users table to query in this environment. |
+
+### Do these first
+- **do first**: Find and merge existing duplicates, both exact matches and case/whitespace variants, before building. Re-run the check immediately before the build while the buggy paths are still live. A duplicate hit during a concurrent build leaves an INVALID index that still enforces uniqueness and still slows writes.
+- **do first** (verified): Build with CREATE UNIQUE INDEX CONCURRENTLY, outside a transaction, with a lock_timeout. Confirm pg_index.indisvalid afterwards. A plain build locks out writes on the live table.
+- **do first**: Root-cause both bugs and compare lower(trim(email)) within each duplicate pair. If the addresses really differ (OAuth relay address, email change), the email index will not catch that kind of duplicate. You would also need provider-identity linking keyed on (provider, provider_subject_id).
+- **do first**: If rows can legitimately share an email (soft-deleted users, a tenant scope, empty-string placeholders), use a partial or composite unique index instead of a global one. Otherwise the dedupe step may merge accounts that should stay separate.
+- **do alongside**: A plain unique index on email is case-sensitive, so it will not catch Foo@x.com vs foo@x.com unless the column is normalised or a matching lower(email) expression index is used. Use one normalisation everywhere: either store lower(trim(email)) and index the plain column, or use a lower(email) expression index and change every lookup, upsert and ORM validator to match; a mismatch causes sequential-scan logins or ON CONFLICT errors. citext and nondeterministic collations are the other routes, but citext lowercases on every comparison and PostgreSQL's docs now recommend nondeterministic collations over it; both require a column type change, which is why normalise-on-write is preferred here.
+- **do alongside**: Handle unique-violation (SQLSTATE 23505) or use ON CONFLICT at every place that creates users or changes emails. Fix the two buggy code paths too. The index rejects bad writes but does not repair the code that makes them.
+
+### Corrections to the premises
+- This is only true if the index is built with CREATE UNIQUE INDEX CONCURRENTLY, outside a transaction block. A plain CREATE UNIQUE INDEX, or ADD CONSTRAINT UNIQUE without USING INDEX, blocks every insert, update and delete on the table until the build finishes, including logins that update last_login_at. A failed concurrent build leaves an INVALID index that must be dropped and rebuilt.
+- You cannot assume the table has no duplicates, and it has already had two duplicate-producing bugs. Run the exact-match and lower(trim(email)) duplicate queries and merge or retire the duplicates before the build. Otherwise the build fails on them.
+
+### Where this could be wrong
+- The two bugs may have produced accounts with different addresses, such as an OAuth relay address or an email change. Then the index is a good invariant but does not fix the reported problem.
+- The product may intentionally allow the same email on several rows (tenants, retained soft-deleted rows), which would make a global email index the wrong constraint.
+- The build-time estimate of seconds to minutes is inferred, not measured. Heavy write load or long-running transactions could stretch the concurrent build considerably.
+- Preferring normalise-on-write over citext or a nondeterministic collation rests on documented comparison overhead and migration simplicity, not a benchmark; if the column is already citext, indexing it directly may be simpler than a backfill.
+- **What would change the verdict:** The duplicate pairs from the two bugs have different lower(trim(email)) values, which points to identity linking rather than, or in addition to, an email index.; The schema shows rows are meant to share an email (a tenant_id scope, soft-deleted rows kept with their email), which calls for a composite or partial index instead of a global one.; A test build on a production-size copy shows the concurrent build cannot finish under real write load within an acceptable window.
+
+#### How the council ran
+- standard mode; 3 blind seats (Claude Fable, Claude Opus, Claude Sonnet). Blind vote: 3× option 2: Add a database-level unique index/constraint on….
+- 5 claim(s) checked with tools (1 unverifiable, 3 partly, 1 true); red team: withstands with changes; audit: flagged fact attrition, repaired; 16 agents. All voting seats were Claude models, so their agreement is one model family's view.

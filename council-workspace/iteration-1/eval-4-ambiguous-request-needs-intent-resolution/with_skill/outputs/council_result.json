@@ -1,0 +1,173 @@
+{
+ "status": "needs_clarification",
+ "mode": "standard",
+ "interpretation": {
+  "neutral_question": "An unspecified system, process or plan has a current approach and a proposed new approach. Neither is described, and no goals or constraints are given. Given the goals and constraints of whatever this concerns, which of the following best serves them: adopt the new approach, keep the current approach, or take an intermediate path such as a staged or trial adoption? What information would be needed to decide?",
+  "answer_type": "decision",
+  "readings": [
+   {
+    "id": "R1",
+    "literal_ask": "Invoke the /council skill to produce a multi-model verdict on whether to adopt an unnamed 'new approach' or keep the current one ('what we have') for a specific pending decision the asker assumes is already known/in context.",
+    "underlying_goal": "Get an independent, pressure-tested recommendation on a particular pending decision the person is facing, so they can commit to a direction with more confidence than a single opinion would give them.",
+    "mean_p": 0.4167,
+    "support": [
+     "framer",
+     "outsider"
+    ],
+    "how_answer_differs": "Needs the concrete details of both the 'new approach' and 'what we have' (likely from earlier context not included here). A competent answer asks for the specifics or states what would make each option win, rather than guessing; the council would need to first identify the two options before weighing trade-offs."
+   },
+   {
+    "id": "R2",
+    "literal_ask": "How do you decide in general whether to switch to a new approach or keep an existing one (general decision framework), possibly framed around a technical/engineering choice (architecture, library, tool, or process change).",
+    "underlying_goal": "Get a general framework for replace-versus-keep decisions (switching cost, risk, reversibility, evidence of benefit), or validate/challenge a specific technical migration decision using independent scrutiny before implementing it.",
+    "mean_p": 0.15,
+    "support": [
+     "framer",
+     "outsider"
+    ],
+    "how_answer_differs": "Can be answered without case-specific details by giving decision criteria and heuristics (cost, risk, reversibility) instead of a verdict on a particular case; if technical, the council would weigh engineering trade-offs specific to a codebase/system."
+   },
+   {
+    "id": "R4",
+    "literal_ask": "Same council invocation, but the decision concerns a non-technical matter (workflow, tool, vendor, strategy, or organizational process) rather than code.",
+    "underlying_goal": "Get a structured, dissent-preserving second opinion on a non-technical choice between the status quo and a proposed change.",
+    "mean_p": 0.05,
+    "support": [
+     "outsider"
+    ],
+    "how_answer_differs": "The council would need to ask clarifying questions about criteria (cost, time, risk tolerance, stakeholders) different from a technical evaluation; relevant premises to check are business/process ones, not code ones."
+   },
+   {
+    "id": "R3",
+    "literal_ask": "Should the council skill in the current working directory (/Users/munimahmad/Liftoff/claude-council-skill) switch to a new implementation approach being considered for itself?",
+    "underlying_goal": "Decide on a change to this repository's own council skill design.",
+    "mean_p": 0.0333,
+    "support": [
+     "framer"
+    ],
+    "how_answer_differs": "Would be settled by reading the repository and any pending changes/proposal, but there is no git history or proposal document identifying the 'new approach', so this reading cannot be confirmed."
+   },
+   {
+    "id": "R5",
+    "literal_ask": "The request is a template/test string with no real referent behind 'new approach' or 'what we have' \u2014 the person has not yet supplied the actual decision and expects the council to ask for it.",
+    "underlying_goal": "Trigger the council workflow, which is expected to first elicit the missing details (what the two options actually are) rather than assume them.",
+    "mean_p": 0.0167,
+    "support": [
+     "outsider"
+    ],
+    "how_answer_differs": "The correct response would be for the council to open by asking what 'the new approach' and 'what we have' concretely are, rather than attempting any evaluation."
+   }
+  ],
+  "options": [
+   {
+    "id": "O1",
+    "label": "Adopt the new approach (replace the current one)"
+   },
+   {
+    "id": "O2",
+    "label": "Keep the current approach as is"
+   },
+   {
+    "id": "O3",
+    "label": "Adopt the new approach incrementally or as a time-boxed trial, with a way to roll back"
+   },
+   {
+    "id": "O4",
+    "label": "Keep the current approach but bring in selected elements of the new one"
+   }
+  ],
+  "user_claims": [],
+  "premises": [
+   {
+    "id": "P1",
+    "premise": "A specific 'new approach' exists and has been defined well enough to compare against the current one.",
+    "source": "implied"
+   },
+   {
+    "id": "P2",
+    "premise": "A current approach exists and is working at least well enough to be a real option to keep.",
+    "source": "implied"
+   },
+   {
+    "id": "P3",
+    "premise": "The choice is binary: adopt the new approach or keep the current one. Hybrid or staged paths are not mentioned.",
+    "source": "implied"
+   },
+   {
+    "id": "P4",
+    "premise": "The reader shares enough context to know what both approaches are.",
+    "source": "implied"
+   }
+  ],
+  "stakes": {
+   "level": "medium",
+   "reversibility": "costly",
+   "rationale": "The stakes cannot be judged because the subject is unknown. Replacing an existing approach usually costs migration effort and adds risk, and undoing it later costs more. Keeping what exists is usually reversible."
+  },
+  "unresolvable_referents": [
+   "\"the new approach\": nothing in the request or context says what it is, and the working directory (/Users/munimahmad/Liftoff/claude-council-skill, which has council/, evals/ and tests/ and is not a git repo) contains no identifiable proposal",
+   "\"what we have\": the current approach, system or domain is not named",
+   "\"we\": the team or project making the decision is not identified"
+  ],
+  "ambiguous": true,
+  "material": true
+ },
+ "clarification": {
+  "question": "What are the current approach and the new approach (what system or process, and what specifically changes), and what goal or problem is the change meant to address?",
+  "why_it_matters": "R1 needs a verdict on a specific change whose contents are unknown, while R2 is best served by general decision criteria, so an answer that works for one would not work for the other.",
+  "options": [
+   {
+    "reading_id": "R1",
+    "label": "Invoke the /council skill to produce a multi-model verdict on whether to adopt an unnamed 'new approach' or keep the current one ('what we have') for a specific pending decision the asker assumes is already known/in context.",
+    "underlying_goal": "Get an independent, pressure-tested recommendation on a particular pending decision the person is facing, so they can commit to a direction with more confidence than a single opinion would give them.",
+    "how_answer_differs": "Needs the concrete details of both the 'new approach' and 'what we have' (likely from earlier context not included here). A competent answer asks for the specifics or states what would make each option win, rather than guessing; the council would need to first identify the two options before weighing trade-offs."
+   },
+   {
+    "reading_id": "R2",
+    "label": "How do you decide in general whether to switch to a new approach or keep an existing one (general decision framework), possibly framed around a technical/engineering choice (architecture, library, tool, or process change).",
+    "underlying_goal": "Get a general framework for replace-versus-keep decisions (switching cost, risk, reversibility, evidence of benefit), or validate/challenge a specific technical migration decision using independent scrutiny before implementing it.",
+    "how_answer_differs": "Can be answered without case-specific details by giving decision criteria and heuristics (cost, risk, reversibility) instead of a verdict on a particular case; if technical, the council would weigh engineering trade-offs specific to a codebase/system."
+   },
+   {
+    "reading_id": "R4",
+    "label": "Same council invocation, but the decision concerns a non-technical matter (workflow, tool, vendor, strategy, or organizational process) rather than code.",
+    "underlying_goal": "Get a structured, dissent-preserving second opinion on a non-technical choice between the status quo and a proposed change.",
+    "how_answer_differs": "The council would need to ask clarifying questions about criteria (cost, time, risk tolerance, stakeholders) different from a technical evaluation; relevant premises to check are business/process ones, not code ones."
+   }
+  ],
+  "unresolvable_referents": [
+   "\"the new approach\": nothing in the request or context says what it is, and the working directory (/Users/munimahmad/Liftoff/claude-council-skill, which has council/, evals/ and tests/ and is not a git repo) contains no identifiable proposal",
+   "\"what we have\": the current approach, system or domain is not named",
+   "\"we\": the team or project making the decision is not identified"
+  ],
+  "default_reading_id": "R1"
+ },
+ "report_markdown": "Before the council deliberates, one thing changes the answer: **What are the current approach and the new approach (what system or process, and what specifically changes), and what goal or problem is the change meant to address?**\nR1 needs a verdict on a specific change whose contents are unknown, while R2 is best served by general decision criteria, so an answer that works for one would not work for the other.\n_Unclear: \"the new approach\": nothing in the request or context says what it is, and the working directory (/Users/munimahmad/Liftoff/claude-council-skill, which has council/, evals/ and tests/ and is not a git repo) contains no identifiable proposal, \"what we have\": the current approach, system or domain is not named, \"we\": the team or project making the decision is not identified_\n\n1. Invoke the /council skill to produce a multi-model verdict on whether to adopt an unnamed 'new approach' or keep the current one ('what we have') for a specific pending decision the asker assumes is already known/in context. \u2014 Needs the concrete details of both the 'new approach' and 'what we have' (likely from earlier context not included here). A competent answer asks for the specifics or states what would make each option win, rather than guessing; the council would need to first identify the two options before weighing trade-offs.\n2. How do you decide in general whether to switch to a new approach or keep an existing one (general decision framework), possibly framed around a technical/engineering choice (architecture, library, tool, or process change). \u2014 Can be answered without case-specific details by giving decision criteria and heuristics (cost, risk, reversibility) instead of a verdict on a particular case; if technical, the council would weigh engineering trade-offs specific to a codebase/system.\n3. Same council invocation, but the decision concerns a non-technical matter (workflow, tool, vendor, strategy, or organizational process) rather than code. \u2014 The council would need to ask clarifying questions about criteria (cost, time, risk tolerance, stakeholders) different from a technical evaluation; relevant premises to check are business/process ones, not code ones.\n\nReply with a number or describe what you mean. If you'd rather not choose, the council will answer for **Invoke the /council skill to produce a multi-model verdict on whether to adopt an unnamed 'new approach' or keep the current one ('what we have') for a specific pending decision the asker assumes is already known/in context.** and note the alternative.",
+ "process": {
+  "roster": [
+   {
+    "label": "framer",
+    "role": "framer",
+    "requested": "opus",
+    "used": "opus",
+    "fell_back": false
+   },
+   {
+    "label": "reader-outsider",
+    "role": "reader",
+    "requested": "sonnet",
+    "used": "sonnet",
+    "fell_back": false
+   },
+   {
+    "label": "reading-reconciler",
+    "role": "mechanical",
+    "requested": "sonnet",
+    "used": "sonnet",
+    "fell_back": false
+   }
+  ],
+  "skipped": [],
+  "notes": []
+ }
+}

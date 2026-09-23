@@ -1,0 +1,7 @@
+Before the council deliberates, one thing changes the answer: **What are the new approach and the current approach, what are they used for, and what problem is the change meant to solve?**
+_Unclear: "the new approach": nothing in the request, context or working directory (/Users/munimahmad/Liftoff/claude-council-skill) identifies what this is, "what we have": the current approach, system or codebase being referred to is not identified, "we": the team, project or domain the decision belongs to is not identified_
+
+1. Whether to replace the current approach with a specific, already-defined new approach known to the asker but not named in the request, in an unstated project or domain. — Any substantive answer requires knowing what the two options concretely are, what problem or project they apply to, and the criteria (cost, risk, time, performance, etc.) by which one would be preferred over the other.
+2. Whether, in general, switching to a newer approach is worth the cost and risk of migration versus staying with a working current approach. — Produces criteria and a conditional rule instead of a recommendation for a particular pair of approaches.
+
+Reply with a number or describe what you mean. If you'd rather not choose, the council will answer for **Whether to replace the current approach with a specific, already-defined new approach known to the asker but not named in the request, in an unstated project or domain.** and note the alternative.

@@ -1,0 +1,144 @@
+{
+ "status": "needs_clarification",
+ "mode": "standard",
+ "interpretation": {
+  "neutral_question": "An unspecified system, process or design currently uses an existing approach, and an unspecified alternative (\"the new approach\") has been proposed. Which of the following best serves the goals of that system given its constraints: adopting the new approach, keeping the current approach, or some staged or partial combination? (The request does not say what either approach is, what domain it belongs to, or what problem the change is meant to solve.)",
+  "answer_type": "decision",
+  "readings": [
+   {
+    "id": "R1",
+    "literal_ask": "Whether to replace the current approach with a specific, already-defined new approach known to the asker but not named in the request, in an unstated project or domain.",
+    "underlying_goal": "Reach a decision between the current approach and the new approach that better meets the goals and constraints of whatever system or project it applies to, so work can proceed in one direction.",
+    "mean_p": 0.875,
+    "support": [
+     "framer",
+     "outsider"
+    ],
+    "how_answer_differs": "Any substantive answer requires knowing what the two options concretely are, what problem or project they apply to, and the criteria (cost, risk, time, performance, etc.) by which one would be preferred over the other."
+   },
+   {
+    "id": "R2",
+    "literal_ask": "Whether, in general, switching to a newer approach is worth the cost and risk of migration versus staying with a working current approach.",
+    "underlying_goal": "Obtain a decision framework (criteria, switching costs, reversibility, evidence thresholds) for this type of change without committing to a specific pair of approaches.",
+    "mean_p": 0.075,
+    "support": [
+     "framer"
+    ],
+    "how_answer_differs": "Produces criteria and a conditional rule instead of a recommendation for a particular pair of approaches."
+   }
+  ],
+  "options": [
+   {
+    "id": "O1",
+    "label": "Adopt the new approach fully, replacing the current one"
+   },
+   {
+    "id": "O2",
+    "label": "Keep the current approach as is"
+   },
+   {
+    "id": "O3",
+    "label": "Adopt the new approach incrementally or in part (pilot, staged migration, or hybrid) while retaining the current one"
+   },
+   {
+    "id": "O4",
+    "label": "Defer the decision until the approaches are compared against defined criteria or measurements"
+   }
+  ],
+  "user_claims": [],
+  "premises": [
+   {
+    "id": "P1",
+    "premise": "There is an existing approach currently in use.",
+    "source": "stated"
+   },
+   {
+    "id": "P2",
+    "premise": "A specific alternative, called the new approach, has been identified and is a viable candidate.",
+    "source": "stated"
+   },
+   {
+    "id": "P3",
+    "premise": "The choice is presented as binary: switch to the new approach or keep the current one.",
+    "source": "implied"
+   },
+   {
+    "id": "P4",
+    "premise": "The reader already knows what both approaches are and what problem the change would address.",
+    "source": "implied"
+   }
+  ],
+  "missing_facts": [
+   "What problem or shortcoming motivates considering the new approach",
+   "Measured performance, cost, reliability or quality of the current approach",
+   "Evidence for the new approach's benefits (benchmarks, prototypes, prior use)",
+   "Migration cost, effort and timeline, and whether the switch is reversible",
+   "Constraints: deadlines, team skills, budget, compatibility or compliance requirements",
+   "Whether the current approach has known failures or is working acceptably"
+  ],
+  "stakes": {
+   "level": "medium",
+   "reversibility": "costly",
+   "rationale": "The domain is unknown. Replacing an existing approach usually carries migration cost and some difficulty reverting, but the actual scale cannot be judged without knowing what the approaches are."
+  },
+  "unresolvable_referents": [
+   "\"the new approach\": nothing in the request, context or working directory (/Users/munimahmad/Liftoff/claude-council-skill) identifies what this is",
+   "\"what we have\": the current approach, system or codebase being referred to is not identified",
+   "\"we\": the team, project or domain the decision belongs to is not identified"
+  ],
+  "ambiguous": true,
+  "material": true
+ },
+ "clarification": {
+  "question": "What are the new approach and the current approach, what are they used for, and what problem is the change meant to solve?",
+  "why_it_matters": null,
+  "options": [
+   {
+    "reading_id": "R1",
+    "label": "Whether to replace the current approach with a specific, already-defined new approach known to the asker but not named in the request, in an unstated project or domain.",
+    "underlying_goal": "Reach a decision between the current approach and the new approach that better meets the goals and constraints of whatever system or project it applies to, so work can proceed in one direction.",
+    "how_answer_differs": "Any substantive answer requires knowing what the two options concretely are, what problem or project they apply to, and the criteria (cost, risk, time, performance, etc.) by which one would be preferred over the other."
+   },
+   {
+    "reading_id": "R2",
+    "label": "Whether, in general, switching to a newer approach is worth the cost and risk of migration versus staying with a working current approach.",
+    "underlying_goal": "Obtain a decision framework (criteria, switching costs, reversibility, evidence thresholds) for this type of change without committing to a specific pair of approaches.",
+    "how_answer_differs": "Produces criteria and a conditional rule instead of a recommendation for a particular pair of approaches."
+   }
+  ],
+  "unresolvable_referents": [
+   "\"the new approach\": nothing in the request, context or working directory (/Users/munimahmad/Liftoff/claude-council-skill) identifies what this is",
+   "\"what we have\": the current approach, system or codebase being referred to is not identified",
+   "\"we\": the team, project or domain the decision belongs to is not identified"
+  ],
+  "default_reading_id": "R1"
+ },
+ "report_markdown": "Before the council deliberates, one thing changes the answer: **What are the new approach and the current approach, what are they used for, and what problem is the change meant to solve?**\n_Unclear: \"the new approach\": nothing in the request, context or working directory (/Users/munimahmad/Liftoff/claude-council-skill) identifies what this is, \"what we have\": the current approach, system or codebase being referred to is not identified, \"we\": the team, project or domain the decision belongs to is not identified_\n\n1. Whether to replace the current approach with a specific, already-defined new approach known to the asker but not named in the request, in an unstated project or domain. \u2014 Any substantive answer requires knowing what the two options concretely are, what problem or project they apply to, and the criteria (cost, risk, time, performance, etc.) by which one would be preferred over the other.\n2. Whether, in general, switching to a newer approach is worth the cost and risk of migration versus staying with a working current approach. \u2014 Produces criteria and a conditional rule instead of a recommendation for a particular pair of approaches.\n\nReply with a number or describe what you mean. If you'd rather not choose, the council will answer for **Whether to replace the current approach with a specific, already-defined new approach known to the asker but not named in the request, in an unstated project or domain.** and note the alternative.",
+ "process": {
+  "roster": [
+   {
+    "label": "reader-outsider",
+    "role": "reader",
+    "requested": "sonnet",
+    "used": "sonnet",
+    "fell_back": false
+   },
+   {
+    "label": "framer",
+    "role": "framer",
+    "requested": "opus",
+    "used": "opus",
+    "fell_back": false
+   },
+   {
+    "label": "reading-reconciler",
+    "role": "mechanical",
+    "requested": "sonnet",
+    "used": "sonnet",
+    "fell_back": false
+   }
+  ],
+  "skipped": [],
+  "notes": []
+ }
+}

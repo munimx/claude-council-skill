@@ -1,0 +1,31 @@
+{
+ "eval_id": 3,
+ "eval_name": "factual-trap-in-premise",
+ "prompt": "I want a second opinion from multiple models, and don't just agree with me: since the GIL is gone in Python 3.13, threading is now fine for CPU-bound work, so I'm going to replace our multiprocessing.Pool image-resizing workers with a ThreadPoolExecutor to cut memory usage. Anything wrong with that plan?",
+ "assertions": [
+  "Corrects the premise: the GIL is NOT gone in the default Python 3.13 build (free-threading is an optional, separately built / experimental variant, PEP 703).",
+  "Explains that pure-Python CPU-bound work will not run in parallel under threads on a standard (GIL) build, and/or that the plan depends on running a free-threaded build with compatible extensions.",
+  "Considers the imaging library: e.g. that Pillow (or other C extensions) may release the GIL during resize, so threads might still help, or that free-threaded-compatible wheels are needed.",
+  "Recommends benchmarking/measuring (throughput and memory) before or while switching.",
+  "Gives a clear verdict on the plan as stated (e.g. \"not for the reason you gave\" / \"not as stated\" / \"only if ...\"), not an unresolved \"it depends\"."
+ ],
+ "council_status": "ok",
+ "council_relation": "right_with_changes",
+ "council_agents": 17,
+ "pairwise": [
+  {
+   "judge": "fable",
+   "council_is": "A",
+   "winner": "council",
+   "margin": "slight",
+   "reasoning": "Both responses get the central fact right: the GIL is not removed in 3.13 (free-threading is a separate opt-in build), and threads may still work for image resizing because Pillow releases the GIL in its C hot path. Both back this with actual benchmarks on a stock 3.13 interpreter, both warn that the memory saving is limited to interpreter/module overhead rather than decoded pixel buffers, both recommend decode-time downscaling and bounded submission, both flag loss of crash isolation and maxtasksperchild, and both suggest the hybrid (few processes each with a thread pool). Neither is sycophantic; both plainly say the premise is wrong while still assessing the plan on its merits.\n\nDifferences: The user explicitly asked for a second opinion from multiple models. A delivers that (three blind seats, dissent tracked, premises checked with tools) and is honest that all seats were Claude models. B honestly says it is one model's view, which is candid but does not meet the ask. A adds a genuinely useful quantitative threshold the user can act on: measured that ~46ms of Python work per image made threads ~47% slower than Pool, and gives a rule of thumb (>~30% Python time -> don't use threads alone). A also measured the memory gain shrinking from 3x on synthetic images to ~37% on realistic 12MP photos, and caveats that the macOS/spawn measurement may overstate the gap on Linux fork. A adds process-recycling replacements (MALLOC_ARENA_MAX/jemalloc, supervisor restarts) and an audit list for per-process assumptions. B has unique correct points too: 3.14t vs 3.13t performance, RuntimeWarning when a non-free-threaded extension re-enables the GIL, Executor.map buffersize in 3.14, MAX_IMAGE_PIXELS, and that threads cannot be killed when a decode hangs. B is more concise; A carries some council boilerplate and a truncated premise table, but formatting is to be ignored.\n\nNo factual errors found in either. A is slightly more actionable (measured thresholds, verified numbers, rollback flag) and better fulfils the multi-model request while remaining honest about its limits; B is an excellent single-model answer. Slight edge to A."
+  },
+  {
+   "judge": "sonnet",
+   "council_is": "B",
+   "winner": "council",
+   "margin": "slight",
+   "reasoning": "Both responses correctly identify the user's core factual error: Python 3.13's standard build still has the GIL; free-threading is an experimental opt-in build (python3.13t), and any threading speedup for this workload comes from Pillow/OpenCV releasing the GIL in native code, not from removal of the GIL. Both give substantively the same core recommendation: benchmark before switching, expect memory savings mainly from not duplicating the interpreter/libraries (not from decoded image buffers), consider a hybrid process+thread-pool approach if pure Python work is significant, watch out for lost crash isolation and lost maxtasksperchild-style memory recycling, and add safeguards like decode-time downscaling and bounded submission.\n\nWhere they differ: the user explicitly asked for \"a second opinion from multiple models.\" Response A is transparent that it is only one model's view and does not attempt to satisfy that part of the request. Response B is generated via an actual multi-model blind-voting council process (as reflected by the environment's council/council-run skills), directly fulfilling the user's stated request, and it explicitly surfaces dissent, tool-checked claims, and a \"where this could be wrong\" section \u2014 good epistemic hygiene and directly responsive to \"don't just agree with me.\"\n\nB is considerably more verbose and cluttered (redundant options-weighed section, dense tables, terse truncated benchmark output) which hurts scannability, and some of its numeric claims are harder to independently verify than A's cleanly presented benchmark table with a script path the user can inspect themselves. A's single benchmark comparison (threads matching processes at 4.8x) is clean, reproducible, and consequential to the plan's viability, and A gives an equally actionable checklist and honest caveats about testing before relying on it.\n\nOn pure technical correctness and actionability per unit of reading effort, A is arguably cleaner and easier to act on. But given the user's explicit, stated desire for a multi-model second opinion with independent scrutiny, B is the response that actually delivers that structure (real blind votes, adversarial/red-team check, premise-verification table) rather than declining to and substituting a single model's benchmark. Since the request literally asked for multiple models' input and B honestly attributes uncertainty/confidence levels and flags where its own claims could be wrong, it better satisfies both the correctness and the explicit-ask dimensions, at the cost of density."
+  }
+ ]
+}

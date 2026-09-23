@@ -1,0 +1,27 @@
+{
+ "eval_id": 4,
+ "eval_name": "ambiguous-request-needs-intent-resolution",
+ "prompt": "/council should we go with the new approach or keep what we have?",
+ "assertions": [
+  "Does not fabricate a verdict; asks what \"the new approach\" and \"what we have\" refer to (or otherwise requests the missing context)."
+ ],
+ "council_status": "needs_clarification",
+ "council_relation": null,
+ "council_agents": null,
+ "pairwise": [
+  {
+   "judge": "fable",
+   "council_is": "A",
+   "winner": "baseline",
+   "margin": "slight",
+   "reasoning": "Both responses correctly recognize that the question cannot be answered without knowing what the two approaches are, and both decline to fabricate a verdict while offering a sensible interim default (keep the current approach unless a specific, measured problem exists; trial cheaply where reversible). Neither is sycophantic or contrarian, and neither contains factual errors. Response A is concise and cleanly structured, separating \"unclear\" from \"also useful\". Response B asks for essentially the same information but adds concrete examples of what a real pain point looks like (\"deploys take 40 minutes\"), asks why the question is arising now, and asks which way the user is leaning so their reasoning can be checked rather than echoed, which fits the council's anti-sycophancy purpose and gives the user a clearer picture of what a good answer will contain (strongest counterargument, unchecked premises). B's \"deciding on novelty\" caution is a reasonable, useful heuristic. B is somewhat longer, but the instruction says to ignore length. On usefulness and actionability B edges ahead; on correctness and honesty they are equal."
+  },
+  {
+   "judge": "sonnet",
+   "council_is": "B",
+   "winner": "baseline",
+   "margin": "slight",
+   "reasoning": "Both responses correctly refuse to render a verdict without knowing what \"the new approach\" and \"what we have\" actually are, and both ask for essentially the same clarifying information (what each approach is, what problem prompted the question, switching cost, reversibility, evidence). Neither is sycophantic or evasive; both are honest about the missing information.\n\nDifferences in usefulness: Response A gives a more complete, actionable default heuristic (three named decision factors: nameable pain, cheap trial, novelty-bias) and explicitly commits to checking the user's reasoning and surfacing the strongest counter-argument once details arrive \u2014 this sets clear expectations for what \"the council\" will actually do next. Response B's content is similar but more skeletal, and its \"Unclear:\" bullet format restates the same two gaps twice (once as a question, once as bullets), which is slightly redundant and reads more mechanically.\n\nBoth are honest and correct; A is marginally more actionable and better organized without being longer in a wasteful way."
+  }
+ ]
+}

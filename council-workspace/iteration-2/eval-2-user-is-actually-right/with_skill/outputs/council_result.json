@@ -1,0 +1,1059 @@
+{
+ "status": "ok",
+ "mode": "standard",
+ "relation_to_user": "partly_right",
+ "verdict": {
+  "recommended_option_id": "O2",
+  "alternative": "O1 (plain unique index on email), only if a GROUP BY lower(trim(email)) HAVING count(*)>1 check returns zero rows, every write path already normalises email, and both incidents turn out to be exact-match races.",
+  "option_assessments": [
+   {
+    "option_id": "O2",
+    "verdict": "sound",
+    "note": "Do it. A unique index on lower(email) closes the check-then-insert race at the database, whatever code path inserts (V5). It also rejects case variants (V3), and it can serve the login lookup when the query uses the same expression (V3). Reconcile existing duplicates first. Build it with CREATE UNIQUE INDEX CONCURRENTLY outside a transaction. Prefer the expression index to a citext column change, which needs a table-level ALTER."
+   },
+   {
+    "option_id": "O1",
+    "verdict": "partly_sound",
+    "note": "It closes the exact-match race (V5), but Alice@x.com and alice@x.com still both get in, because a plain btree on text is case-sensitive. Only a lower() unique index blocks rows that differ only in case (V3). It is enough only if the data and every write path are already normalised."
+   },
+   {
+    "option_id": "O3",
+    "verdict": "unsound",
+    "note": "On its own it cannot close the check-then-insert race. A test run showed two concurrent checks both seeing no row and both inserting, while a constraint allowed exactly one insert (V5). It also misses any write path that skips the logic. Idempotent upsert, unique-violation handling and account linking are worth doing alongside O2, not instead of it."
+   },
+   {
+    "option_id": "O4",
+    "verdict": "unsound",
+    "note": "Two duplicate-account incidents this quarter (V2) show the current guards fail. Doing nothing leaves both the race and the case-variant gap open."
+   }
+  ],
+  "headline": "Add a unique index on lower(email), built with CREATE UNIQUE INDEX CONCURRENTLY after merging existing duplicates, and make the login query use the same lower(email) expression.",
+  "answer": "O2 is the right fix, and all three analysts reached it independently. A unique index on lower(email) enforces uniqueness in the database, which application logic cannot do. A test run reproduced the race: two concurrent checks both saw no row and both inserted, while a constraint allowed exactly one insert (V5). A lower() unique index also rejects addresses that differ only in case, which O1's plain index lets through, and it can serve logins when the query uses the same expression (V3).\n\nDo these first, in order:\n1. Measure. Run GROUP BY email and GROUP BY lower(trim(email)) HAVING count(*)>1, and check pg_indexes to see which indexes users already has.\n2. Pull the rows from the two incidents and classify each: exact duplicate (a race), a case or whitespace variant, or two different emails.\n3. Deploy write-time normalisation (lower and trim in one shared function), plus handling for SQLSTATE 23505 (unique violation) on signup, OAuth callback and email change.\n4. Merge the existing duplicates. Treat this as a product and security decision: auto-merge only where both sides are verified.\n5. Re-run the duplicate check, then run CREATE UNIQUE INDEX CONCURRENTLY ... ON users (lower(email)) outside any transaction.\n6. Confirm pg_index.indisvalid is true. Run EXPLAIN on the login SQL the ORM actually generates before dropping the old plain email index.\n\nThe incident classification is the fact that changes the scope. If either incident involved two different emails (OAuth relay addresses, a work and a personal address, or an email change), O2 is still worth shipping but will not stop that kind of duplicate. That needs separate account linking keyed on verified email or the provider's user ID. Auth0 documents that the same person signing up through different providers becomes separate users by default (V4). If rows are soft-deleted or scoped by tenant, make the index partial (WHERE deleted_at IS NULL) or composite (tenant_id, lower(email)), and give the login query the same predicate.",
+  "alt_reading_answer": null,
+  "why": [
+   "A test run confirmed that application-only check-then-insert is racy: two concurrent checks both saw no row and both inserted. A unique constraint allowed exactly one insert, so enforcement belongs in the database (V5).",
+   "The PostgreSQL docs confirm that a unique index on lower(col) rejects rows that differ only in case, and that the planner uses it when the query matches the same expression. So O2 prevents more duplicates than O1 and still serves logins (V3).",
+   "All three analysts chose O2 independently, and the red team found it holds up with changes. No verification record contradicts a load-bearing claim behind it.",
+   "The PostgreSQL docs, fetched by all three analysts, say CREATE UNIQUE INDEX CONCURRENTLY does not block writes during the build. It must run outside a transaction, and it leaves an INVALID index behind if duplicates remain. That makes the migration safe at 4M rows once the data is reconciled."
+  ],
+  "premise_corrections": [],
+  "caveats": [
+   {
+    "text": "Merge or rename existing exact and case/whitespace duplicates, and re-check immediately before the build. Otherwise the unique build fails and leaves an INVALID index that still enforces uniqueness and slows writes.",
+    "severity": "blocking",
+    "basis": "seat_consensus",
+    "evidence_ref": null
+   },
+   {
+    "text": "Run CREATE UNIQUE INDEX CONCURRENTLY outside a transaction block. Most migration tools wrap migrations in one by default, so turn that off (Rails disable_ddl_transaction!, Django atomic=False). Set a statement timeout and watch for idle-in-transaction sessions, because the build waits for them.",
+    "severity": "blocking",
+    "basis": "seat_consensus",
+    "evidence_ref": null
+   },
+   {
+    "text": "Make the login query and every write path use the same expression as the index, lower(email) = lower($1). Otherwise the index is not used and logins may fall back to a sequential scan. Django iexact generates UPPER(), which will not use a lower() index. Run EXPLAIN on the real generated SQL before dropping the old index.",
+    "severity": "do_alongside",
+    "basis": "verified",
+    "evidence_ref": "V3"
+   },
+   {
+    "text": "Classify the two incidents. If either involved different email addresses (OAuth or relay addresses, email changes), O2 will not prevent that kind of duplicate. Add account linking keyed on verified email or the provider's user ID.",
+    "severity": "do_alongside",
+    "basis": "verified",
+    "evidence_ref": "V4"
+   },
+   {
+    "text": "Handle SQLSTATE 23505 (unique violation) at signup, OAuth callback and email change. Show 'account exists' or a link flow, not a 500. Ship this before the index goes in.",
+    "severity": "do_alongside",
+    "basis": "seat_consensus",
+    "evidence_ref": null
+   },
+   {
+    "text": "If rows are soft-deleted, scoped by tenant, or can have a null email, use a partial index (WHERE deleted_at IS NULL) or a composite one (tenant_id, lower(email)), and give the login query the same predicate.",
+    "severity": "do_alongside",
+    "basis": "seat_consensus",
+    "evidence_ref": null
+   }
+  ],
+  "minority_report": {
+   "exists": false,
+   "position": null,
+   "strongest_argument": null,
+   "why_not_adopted": null,
+   "would_be_right_if": null
+  },
+  "red_team_responses": [
+   {
+    "failure_id": "F1",
+    "response": "mitigate",
+    "detail": "Classifying the incident rows is now a do-alongside step. O2 ships either way, because it closes the race (V5) and case variants (V3). If either incident involved two different emails, account linking keyed on verified email or the provider's user ID becomes a separate workstream (V4)."
+   },
+   {
+    "failure_id": "F2",
+    "response": "mitigate",
+    "detail": "Use one normalise() function in shared code for both writes and the login lookup. Match the index expression to the SQL the ORM actually emits (V3). Run EXPLAIN on the login query before dropping the old index, and alert on sequential scans of users."
+   },
+   {
+    "failure_id": "F3",
+    "response": "mitigate",
+    "detail": "Order the rollout: normalisation and 23505 handling first, then reconcile duplicates, then re-check, then the concurrent build outside a transaction with timeouts, then check indisvalid (drop concurrently and retry if false). Prefer the expression index. If a normalised column is wanted, add a plain column and backfill it in batches rather than adding a stored generated column, which rewrites the table."
+   },
+   {
+    "failure_id": "F4",
+    "response": "mitigate",
+    "detail": "Treat the merge as a product and security decision. Auto-merge only pairs where both sides are verified, move child rows inside a transaction, keep an audit table, and send the rest to manual review. Never auto-link OAuth to an unverified local account, and expire unverified signups."
+   },
+   {
+    "failure_id": "F5",
+    "response": "mitigate",
+    "detail": "Settle uniqueness scope from the table's DDL before building. Use a partial (WHERE deleted_at IS NULL) or composite (tenant_id, lower(email)) unique index as the data model requires, with a matching login predicate."
+   }
+  ],
+  "where_council_may_be_wrong": [
+   "The two incidents may not involve email equality at all (OAuth relay addresses, different addresses, email changes). Then O2 is good hygiene but does not fix the bugs that actually happened.",
+   "Email may not be a one-per-account identity key (shared B2B inboxes, phone-only accounts, several emails per user). A global unique index on email would then be the wrong shape.",
+   "The legacy duplicates may be too many or too tangled to merge soon, which delays the full index."
+  ],
+  "what_council_may_be_missing": "No analyst saw the actual schema, data, login query, ORM or incident reports. So it is unconfirmed whether email is nullable, soft-deleted or tenant-scoped, whether an index already exists, how many duplicates exist, and what caused the two bugs. The recommendation rests on general PostgreSQL behaviour, not on this system.",
+  "cost_if_council_wrong": "If the incidents came from identity-provider or different-address signups, the team spends a merge and migration effort and still gets a third duplicate-account bug. If the rollout is careless, the costs are login latency regressions, users locked out by case-sensitive matching, 500 errors on signup, or data lost or accounts exposed through careless merging.",
+  "what_would_change_verdict": [
+   "The incident rows show different email addresses for the same person, not addresses equal under lower(trim(email)). Account linking then becomes the primary fix, with O2 as a secondary backstop.",
+   "GROUP BY lower(trim(email)) HAVING count(*)>1 returns zero rows, every write path already normalises email, and both incidents were exact-match races. O1 would then be simpler and just as good.",
+   "The users DDL or product rules show email is not a one-per-account key (shared inboxes, several emails per user). A global unique index would then be the wrong design."
+  ],
+  "overrides": [],
+  "claims_addressed": [
+   "U1",
+   "U4",
+   "V1",
+   "V2",
+   "V3",
+   "V4",
+   "V5",
+   "A.C4",
+   "A.C5",
+   "B.C3",
+   "B.C5",
+   "C.C7"
+  ],
+  "confidence": "medium",
+  "confidence_basis": "The mechanisms are verified: the race was reproduced (V5), and the docs confirm the expression index behaviour (V3) and the concurrent-build behaviour. All three analysts agreed independently. But the root cause of the two incidents, the current duplicate counts and the uniqueness scope are unknown, and any of these could shrink O2 from \"the fix\" to \"a necessary backstop\". The confidence ceiling is medium.",
+  "recommended": "O2: Add a unique index on a normalised form of the email (e.g. lower(email) expression index or citext column), after reconciling existing duplicates",
+  "confidence_ceiling": "medium"
+ },
+ "interpretation": {
+  "neutral_question": "A PostgreSQL users table holds about 4 million rows, and users are looked up by email on every login. Two bugs this quarter produced duplicate accounts for the same person. Which of the following best prevents duplicate accounts per person while keeping login lookups efficient and the migration safe on a live table of this size?",
+  "answer_type": "decision",
+  "readings": [
+   {
+    "id": "R1",
+    "literal_ask": "Whether adding a unique index (constraint) on the users.email column in the ~4M-row Postgres users table is the right way to prevent the same person from ending up with duplicate accounts, given that email is looked up on every login and two duplicate-account incidents occurred this quarter.",
+    "underlying_goal": "Prevent duplicate accounts per person at the data layer, with a safe rollout on a live, heavily-queried table.",
+    "mean_p": 0.75,
+    "support": [
+     "framer",
+     "outsider"
+    ],
+    "how_answer_differs": null
+   },
+   {
+    "id": "R2",
+    "literal_ask": "Whether a unique index on users.email is appropriate for the per-login email lookup, as an indexing and performance choice.",
+    "underlying_goal": "Keep login lookups by email fast and correctly indexed.",
+    "mean_p": 0.1,
+    "support": [
+     "framer"
+    ],
+    "how_answer_differs": "Centres on whether an index on email already exists and on query plans, not on data integrity. A unique index adds little speed over an existing non-unique one. The answer covers the index type and matching the lookup expression (e.g. lower(email)) rather than deduplication."
+   },
+   {
+    "id": "R3",
+    "literal_ask": "What the safest way is to add a uniqueness guarantee on email to a large, actively-queried production table, covering aspects such as concurrent index build, handling of existing duplicate rows, and lock or downtime impact.",
+    "underlying_goal": "Roll out the fix without causing an outage, failed migration, or query slowdown on a table of this size that is read on every login.",
+    "mean_p": 0.1,
+    "support": [
+     "outsider"
+    ],
+    "how_answer_differs": "An answer to this reading would focus on migration mechanics (concurrent index build, pre-cleaning existing duplicates, constraint validation strategy) rather than on whether uniqueness is the correct fix for the underlying duplication problem."
+   },
+   {
+    "id": "R4",
+    "literal_ask": "Whether a database-level unique index is sufficient by itself, or whether the mechanism behind the duplicate accounts (such as inconsistent email casing or whitespace, multiple signup paths, or race conditions) also requires application-level changes.",
+    "underlying_goal": "Address the actual mechanism behind the two prior incidents rather than add a constraint that a normalization or race-condition bug could still slip past.",
+    "mean_p": 0.05,
+    "support": [
+     "outsider"
+    ],
+    "how_answer_differs": "An answer to this reading would need to diagnose or account for the specific mechanism behind the two incidents (e.g. case sensitivity, retry races) rather than evaluate the index in isolation."
+   }
+  ],
+  "options": [
+   {
+    "id": "O1",
+    "label": "Add a unique index on users.email as stored (exact-match uniqueness)"
+   },
+   {
+    "id": "O2",
+    "label": "Add a unique index on a normalised form of the email (e.g. lower(email) expression index or citext column), after reconciling existing duplicates"
+   },
+   {
+    "id": "O3",
+    "label": "Fix duplicate prevention in application logic only (e.g. idempotent upsert, locking or account-linking on signup/login) without a database uniqueness constraint"
+   },
+   {
+    "id": "O4",
+    "label": "Keep the schema and code as they are"
+   }
+  ],
+  "user_claims": [
+   {
+    "id": "U1",
+    "claim_third_person": "The asker states the database is PostgreSQL.",
+    "load_bearing": true,
+    "checkable": true
+   },
+   {
+    "id": "U2",
+    "claim_third_person": "The asker states the users table has about 4 million rows.",
+    "load_bearing": false,
+    "checkable": true
+   },
+   {
+    "id": "U3",
+    "claim_third_person": "The asker states users are looked up by email on every login.",
+    "load_bearing": false,
+    "checkable": true
+   },
+   {
+    "id": "U4",
+    "claim_third_person": "The asker states there were two bugs this quarter in which the same person ended up with duplicate accounts.",
+    "load_bearing": true,
+    "checkable": true
+   }
+  ],
+  "premises": [
+   {
+    "id": "P1",
+    "premise": "The duplicate accounts share the same email value (rather than differing by case, whitespace, aliases, or coming from different identity providers).",
+    "source": "implied"
+   },
+   {
+    "id": "P2",
+    "premise": "There is currently no unique constraint or unique index on users.email.",
+    "source": "implied"
+   },
+   {
+    "id": "P3",
+    "premise": "Each person should have exactly one account per email address (email is intended as a unique identity key).",
+    "source": "implied"
+   },
+   {
+    "id": "P4",
+    "premise": "The root cause of the duplicate-account bugs is something a database uniqueness constraint would catch (e.g. a race between concurrent signups).",
+    "source": "implied"
+   },
+   {
+    "id": "P5",
+    "premise": "Login lookup performance by email is relevant to the decision.",
+    "source": "implied"
+   },
+   {
+    "id": "P6",
+    "premise": "The table is live and in production, so migration locking and existing duplicate rows matter.",
+    "source": "implied"
+   }
+  ],
+  "missing_facts": [
+   "Root cause of the two duplicate-account bugs: a concurrent-signup race, case or whitespace differences in the email, different OAuth or identity providers, email changes, or something else",
+   "Whether duplicate emails exist in the table now, exact or case-insensitive, and how many (a unique index build fails if they do)",
+   "Whether users.email already has an index (unique or not), and how the login query matches on email (exact, lower(), ILIKE)",
+   "Whether emails are normalised before they are stored (lowercasing, trimming), and whether the column is text, varchar or citext",
+   "Whether email is nullable, and whether soft-deleted, deactivated or multi-tenant rows may legitimately share an email (which would need a partial or composite index)",
+   "PostgreSQL version, write traffic, and whether the migration tooling can run CREATE INDEX CONCURRENTLY outside a transaction",
+   "How the application handles a unique-violation error at signup, login or email change today"
+  ],
+  "stakes": {
+   "level": "medium",
+   "reversibility": "costly",
+   "rationale": "An index can be dropped, but building one on a 4M-row live table can block writes unless it is built concurrently. A failed concurrent build leaves an INVALID index behind. Merging existing duplicate accounts to allow the constraint changes user data and is hard to undo. New unique-violation errors can break signup or login paths that do not handle them."
+  },
+  "unresolvable_referents": [],
+  "ambiguous": false,
+  "material": false,
+  "reading_used": {
+   "id": "R1",
+   "literal_ask": "Whether adding a unique index (constraint) on the users.email column in the ~4M-row Postgres users table is the right way to prevent the same person from ending up with duplicate accounts, given that email is looked up on every login and two duplicate-account incidents occurred this quarter.",
+   "underlying_goal": "Prevent duplicate accounts per person at the data layer, with a safe rollout on a live, heavily-queried table.",
+   "mean_p": 0.75,
+   "support": [
+    "framer",
+    "outsider"
+   ],
+   "how_answer_differs": null
+  },
+  "alternate_reading": null,
+  "seat_reading_divergences": [
+   {
+    "seat": "practitioner",
+    "answered": "R1",
+    "divergence": "R1/R3/R4 aren't really separable here: the four options already encode \"is a unique index right\" (R1/R2), \"is it sufficient alone\" (R4), and \"how to build it safely\" (R3) as a single choice. I answered R1 but folded R3/R4 in as conditions rather than treating them as a separate question."
+   }
+  ]
+ },
+ "caller_challenge": {
+  "caller_stated": "I want to add a unique index on users.email. Good idea?",
+  "council_recommends": "O2: Add a unique index on a normalised form of the email (e.g. lower(email) expression index or citext column), after reconciling existing duplicates",
+  "reasoning": [
+   "A test run confirmed that application-only check-then-insert is racy: two concurrent checks both saw no row and both inserted. A unique constraint allowed exactly one insert, so enforcement belongs in the database (V5).",
+   "The PostgreSQL docs confirm that a unique index on lower(col) rejects rows that differ only in case, and that the planner uses it when the query matches the same expression. So O2 prevents more duplicates than O1 and still serves logins (V3).",
+   "All three analysts chose O2 independently, and the red team found it holds up with changes. No verification record contradicts a load-bearing claim behind it.",
+   "The PostgreSQL docs, fetched by all three analysts, say CREATE UNIQUE INDEX CONCURRENTLY does not block writes during the build. It must run outside a transaction, and it leaves an INVALID index behind if duplicates remain. That makes the migration safe at 4M rows once the data is reconciled."
+  ],
+  "context_possibly_missing": "No analyst saw the actual schema, data, login query, ORM or incident reports. So it is unconfirmed whether email is nullable, soft-deleted or tenant-scoped, whether an index already exists, how many duplicates exist, and what caused the two bugs. The recommendation rests on general PostgreSQL behaviour, not on this system.",
+  "cost_if_council_wrong": "If the incidents came from identity-provider or different-address signups, the team spends a merge and migration effort and still gets a third duplicate-account bug. If the rollout is careless, the costs are login latency regressions, users locked out by case-sensitive matching, 500 errors on signup, or data lost or accounts exposed through careless merging."
+ },
+ "chair_addendum": null,
+ "premise_checks": [
+  {
+   "user_claim_id": "U1",
+   "claim": "The asker states the database is PostgreSQL.",
+   "verdict": "true",
+   "source": "verification",
+   "evidence": "/Users/munimahmad/Liftoff/claude-council-skill/evals/evals.json:14: \"prompt\": \"get a council on this: we look users up by email on every login in Postgres, the users table is ~4M rows, and we've had two bugs ",
+   "corrected": null
+  },
+  {
+   "user_claim_id": "U2",
+   "claim": "The asker states the users table has about 4 million rows.",
+   "verdict": "unknown",
+   "source": "none",
+   "evidence": null,
+   "corrected": null
+  },
+  {
+   "user_claim_id": "U3",
+   "claim": "The asker states users are looked up by email on every login.",
+   "verdict": "unknown",
+   "source": "none",
+   "evidence": null,
+   "corrected": null
+  },
+  {
+   "user_claim_id": "U4",
+   "claim": "The asker states there were two bugs this quarter in which the same person ended up with duplicate accounts.",
+   "verdict": "true",
+   "source": "verification",
+   "evidence": "/Users/munimahmad/Liftoff/claude-council-skill/evals/evals.json:14: \"prompt\": \"get a council on this: we look users up by email on every login in Postgres, the users table is ~4M rows, and we've had two bugs  | /Users/munimahmad/Liftoff/claude-council-skill/council-workspace/iteration-1/eval-2-user-is-actually-right/with_skill/outputs/council_result.json:93-99: \"id\": \"U4\", \"claim_third_person\": \"The asker states that there were two bugs this quarter in which the same person ended up with duplicate a",
+   "corrected": null
+  }
+ ],
+ "tally": {
+  "blind_counts": {
+   "O2: Add a unique index on a normalised form of the email (e.g. lower(email) expression index or citext column), after reconciling existing duplicates": 3
+  },
+  "counts": {
+   "O2: Add a unique index on a normalised form of the email (e.g. lower(email) expression index or citext column), after reconciling existing duplicates": 3
+  },
+  "n": 3,
+  "unanimous": true,
+  "families": [
+   "anthropic"
+  ]
+ },
+ "minority_report": {
+  "exists": false,
+  "position": null,
+  "strongest_argument": null,
+  "why_not_adopted": null,
+  "would_be_right_if": null
+ },
+ "dissent": null,
+ "red_team": {
+  "verdict_on_leader": "withstands_with_changes",
+  "failure_modes": [
+   {
+    "id": "F1",
+    "scenario": "The index shipped, but the two incidents were never checked. They turn out to be OAuth/SSO versus password signups under different addresses (for example an Apple 'Hide My Email' relay, or a work and a personal address), Gmail dot or plus aliases, or an email-change flow. lower(trim(email)) treats those as different, so a third duplicate-account bug arrives in month four. The index worked as designed; it just did not fix what caused these bugs. The council's own earlier intake (council-workspace/iteration-1/eval-2-user-is-actually-right/with_skill/outputs/report.md) raised this exact question and never answered it. Auth0's docs (V4) confirm that multi-provider signup creates separate users by default.",
+    "likelihood": "medium",
+    "blocking": false,
+    "factual_claim": "In both incidents this quarter, the duplicate users rows have emails that are equal under lower(trim(email)). Check by pulling the incident rows and comparing lower(trim(email)) across each pair.",
+    "mitigation": "Before calling O2 'the fix', pull the incident rows and classify each one: an exact duplicate (race), a case or whitespace variant, or a different email. Ship O2 either way, because it closes the race and the case variants. If either incident involved different emails, open a separate workstream for identity linking keyed on verified email or provider subject."
+   },
+   {
+    "id": "F2",
+    "scenario": "The lookup and the index drift apart. Writes are normalised, but the login query stays 'WHERE email = $1' or uses Django's email__iexact. On PostgreSQL, Django compiles iexact to UPPER(email::text) = UPPER(%s), which cannot use a lower(email) index. One of two things follows. If someone drops the old plain email index as 'redundant', every login sequentially scans 4M rows and p99 login latency collapses. If the old index stays, login becomes effectively case-sensitive against lowercased stored values, and users who type 'Alice@x.com' get 'user not found'.",
+    "likelihood": "medium",
+    "blocking": false,
+    "factual_claim": "django/db/backends/postgresql/base.py maps 'iexact' to '= UPPER(%s)'. The PostgreSQL docs (indexes-expressional.html, V3) say an expression index is used only when the query predicate matches the indexed expression.",
+    "mitigation": "Put one normalise() function in shared code and use it in both the write paths and the login lookup. Make the index expression match the expression the ORM actually emits: Upper() if the app uses Django iexact, Lower() if the query calls lower() explicitly. Run EXPLAIN on the exact generated login SQL before dropping any existing index, and alert on seq scans of users."
+   },
+   {
+    "id": "F3",
+    "scenario": "The rollout goes wrong. Duplicates are cleaned up, but the still-unfixed signup path inserts new ones before the build runs. CREATE UNIQUE INDEX CONCURRENTLY then fails and leaves an INVALID index. The planner ignores that index, yet it still costs update overhead and keeps enforcing uniqueness. Signup, OAuth callback and email-change paths start throwing unhandled 23505 errors, which show up as 500s, before anyone believes the constraint exists. Separately, the migration framework wraps the DDL in a transaction and it errors out, or the build hangs waiting on an idle-in-transaction session. If the team picks the 'normalised column' variant as ADD COLUMN ... GENERATED ALWAYS AS (lower(email)) STORED, PostgreSQL rewrites the whole 4M-row table and its indexes under lock.",
+    "likelihood": "medium",
+    "blocking": false,
+    "factual_claim": "The PostgreSQL CREATE INDEX docs say a failed concurrent unique build leaves an 'invalid' index that 'continues to enforce its uniqueness constraint afterwards'. They also say uniqueness is enforced against other transactions from the second scan onward, that CONCURRENTLY cannot run inside a transaction block, and that the build waits for all existing transactions. The ALTER TABLE docs (PG 18) say adding a stored generated column rewrites the entire table and its indexes.",
+    "mitigation": "Work in this order. (1) Deploy write-time normalisation plus handling of 23505 (unique-violation), mapped to 'email already registered' or a link flow, on every write path. (2) Reconcile existing duplicates. (3) Re-run the GROUP BY lower(trim(email)) HAVING count(*)>1 check immediately before the build. (4) Run the build outside a transaction (Django AddIndexConcurrently with atomic=False, Rails disable_ddl_transaction!), with a statement timeout and with idle-in-transaction sessions killed. (5) Confirm pg_index.indisvalid afterwards, and on failure drop the index concurrently and retry. For a normalised column, backfill a plain column in batches instead of adding a stored generated column."
+   },
+   {
+    "id": "F4",
+    "scenario": "Reconciliation or the new uniqueness rule causes a security or data-loss incident. An automated merge keeps the wrong survivor, orphans orders or subscriptions, or merges an attacker's unverified pre-registered account into the victim's verified one. That is the 'classic-federated merge' pre-account-hijacking pattern. Once email is unique, an unverified squatter registration also blocks the real owner. If the OAuth callback does 'find user by email and log in', it hands the victim's SSO session to the attacker's pre-created account.",
+    "likelihood": "low",
+    "blocking": false,
+    "factual_claim": "The users table (or the auth flow) separates verified from unverified emails, and the OAuth callback currently links to an existing user by email match alone. Check the schema and the callback code. The attack class is documented in Sudhodanan and Paverd, 'Pre-hijacked Accounts', USENIX Security 2022.",
+    "mitigation": "Treat the merge as a product and security decision, as Analyst 2 said. Auto-merge only pairs where both sides are verified, pick the survivor deterministically, move child rows inside a transaction and keep an audit table. Send everything else to manual review. Never auto-link OAuth to an unverified local account. Expire unverified signups so squatting cannot hold an address."
+   },
+   {
+    "id": "F5",
+    "scenario": "The uniqueness scope is wrong for the data model. The table soft-deletes rows (deleted_at) or is multi-tenant. A global unique index on lower(email) then blocks legitimate re-signup after account deletion, or blocks the same person from belonging to two tenants. Support tickets pile up and someone drops the index under pressure. A partial index added as a fix (WHERE deleted_at IS NULL) serves the login query only if the query carries the same predicate.",
+    "likelihood": "low",
+    "blocking": false,
+    "factual_claim": "The users table has a soft-delete column, or an organisation/tenant column that scopes identity. Check the users table's DDL.",
+    "mitigation": "Settle the scope before building. Use UNIQUE (lower(email)) WHERE deleted_at IS NULL, or UNIQUE (tenant_id, lower(email)), as the model requires, and give the login query the same predicate. If the citext variant is chosen, note that its docs recommend nondeterministic collations instead and that its case-folding depends on the database's LC_CTYPE."
+   }
+  ],
+  "conditions_where_leader_right": "The recommendation is right when all of the following hold:\n- The system is PostgreSQL (V1) and users log in with one email per account, across the whole system or within a tenant.\n- The duplicates come at least partly from the check-then-insert race (V5) or from case and whitespace variants of the same address.\n- Existing duplicates can be reconciled, and the survivor rules for accounts that own data are agreed.\n- Every write path and the login lookup can use the same normalisation expression that the index uses.\n- The migration can run CREATE UNIQUE INDEX CONCURRENTLY outside a transaction, after unique-violation (23505) handling has shipped.\n\nUnder those conditions the index is the only fix that holds in the database whatever code path inserts. It is also cheap on 4M rows and can double as the login index. None of the failure modes found is a reason not to do it.",
+  "conditions_where_leader_wrong": "The recommendation is wrong, or at best incomplete, when:\n- The incidents came from different email addresses: OAuth relay or private addresses, a work address versus a personal one, or email changes. There O2 is necessary but does not fix those bugs, and presenting it as the fix is the error. The fix is identity linking keyed on verified email or provider subject.\n- Email is not the identity key: users can have several emails, accounts can lack an email (phone-only), or several accounts legitimately share an address, as with shared team inboxes in B2B.\n- Uniqueness must be scoped, by tenant or to rows that are not soft-deleted. A global index is then the wrong shape; a composite or partial one is needed.\n- The legacy duplicates are too many or too tangled to reconcile soon. A full unique index cannot be built then; an interim partial index over new rows only is weaker and does not catch a new row that duplicates an old one.\n- The ORM's lookup cannot be made to match the index expression, and the team cannot keep a second index for it.",
+  "model": "opus",
+  "family": "anthropic"
+ },
+ "flips": [],
+ "audit": {
+  "passed": true,
+  "problems": []
+ },
+ "ballots": [
+  {
+   "seat": "first_principles",
+   "model": "fable",
+   "family": "anthropic",
+   "trusted": true,
+   "position": "O2: Add a unique index on a normalised form of the email (e.g. lower(email) expression index or citext column), after reconciling existing duplicates",
+   "stance": "recommend_with_changes",
+   "confidence": "high",
+   "answer": "Yes: a database unique constraint on email is the right move, and it is the only thing that actually closes the gap. Two bugs in one quarter is exactly the signature of application-only guards (O3) failing; O1 is too weak because Alice@x.com and alice@x.com stay distinct; O4 is not a serious option.\n\nWhat I would do now: (1) Measure: run the exact and lower(trim(email)) duplicate queries and check pg_indexes for users. (2) Reconcile existing duplicates (merge/mark) \u2014 a unique build fails outright otherwise, and with CONCURRENTLY it leaves an invalid index you must drop. (3) Normalise at write time in the app (lower+trim in the signup/OAuth/email-change paths, one function) and make the login query match the same form. (4) CREATE UNIQUE INDEX CONCURRENTLY users_email_lower_uniq ON users (lower(email)) \u2014 outside a transaction block; ~4M rows means minutes, no write lock. Prefer the expression index over a citext type change (no table rewrite, no extension) unless you already use citext. (5) Handle SQLSTATE 23505 explicitly as \"account exists \u2192 log in / link\" so the constraint becomes a friendly path, not a 500. (6) Verify pg_index.indisvalid afterwards.\n\nIf soft-deleted rows may reuse an email, make it partial (WHERE deleted_at IS NULL). If the root cause was OAuth identity linking rather than email variance, the constraint is still the backstop but you also need an account-linki",
+   "conditions": [
+    {
+     "text": "Find and reconcile existing exact and case-insensitive duplicates before building; the unique build fails and (with CONCURRENTLY) leaves an invalid index otherwise.",
+     "severity": "blocking"
+    },
+    {
+     "text": "Run CREATE INDEX CONCURRENTLY outside a transaction block; confirm the migration tool can (Rails disable_ddl_transaction!, Django atomic=False, Alembic autocommit) and that no pooler wraps it.",
+     "severity": "blocking"
+    },
+    {
+     "text": "Normalise email (lower+trim) in every write path and make the login query use lower(email) = lower($1), otherwise the expression index will not serve login lookups and the constraint can be bypassed by casing.",
+     "severity": "do_alongside"
+    },
+    {
+     "text": "Catch unique violations (SQLSTATE 23505) at signup/login/email-change and turn them into 'account exists / link account', not an error page.",
+     "severity": "do_alongside"
+    },
+    {
+     "text": "Read the two incident reports: if duplicates came from OAuth identity linking or email changes rather than casing/races, add an account-linking flow as well.",
+     "severity": "do_alongside"
+    },
+    {
+     "text": "If soft-deleted or multi-tenant rows may legitimately share an email, use a partial (WHERE deleted_at IS NULL) or composite unique index; check pg_index.indisvalid after the build.",
+     "severity": "minor"
+    }
+   ],
+   "claims": [
+    {
+     "id": "C1",
+     "text": "CREATE INDEX CONCURRENTLY does not take locks blocking inserts/updates/deletes, cannot run inside a transaction block, and performs two table scans plus waits for existing transactions.",
+     "load_bearing": true,
+     "status": "verified_tool",
+     "evidence": "WebFetch https://www.postgresql.org/docs/current/sql-createindex.html: 'build the index without taking any locks that prevent concurrent inserts, updates, or deletes'; 'CREATE INDEX CONCURRENTLY cannot [run in a transaction block]'; 'must perform two scans of the table'."
+    },
+    {
+     "id": "C2",
+     "text": "A concurrent unique index build that hits a uniqueness violation fails and leaves an invalid index behind that must be dropped and retried; an invalid unique index can still enforce uniqueness.",
+     "load_bearing": true,
+     "status": "verified_tool",
+     "evidence": "Same page: 'such as ... a uniqueness violation in a unique index, the CREATE INDEX command will fail but leave behind an \"invalid\" index ... drop the index and try again'."
+    },
+    {
+     "id": "C3",
+     "text": "Partial unique indexes (UNIQUE with WHERE) are supported for enforcing uniqueness over a subset of rows.",
+     "load_bearing": false,
+     "status": "verified_tool",
+     "evidence": "Same page: 'use WHERE with UNIQUE to enforce uniqueness over a subset of a table'."
+    },
+    {
+     "id": "C4",
+     "text": "citext is less efficient than text (extra copies, no B-tree dedup) but slightly more efficient than lower(); docs recommend considering nondeterministic collations instead.",
+     "load_bearing": false,
+     "status": "verified_tool",
+     "evidence": "WebFetch https://www.postgresql.org/docs/current/citext.html: 'citext is not as efficient as text ... slightly more efficient than using lower'; 'Consider using nondeterministic collations ... instead of this module'."
+    },
+    {
+     "id": "C5",
+     "text": "PostgreSQL supports unique indexes on expressions such as lower(email), and the planner only uses an expression index when the query predicate matches that expression.",
+     "load_bearing": true,
+     "status": "from_memory",
+     "evidence": "Standard Postgres behaviour (docs chapter 'Indexes on Expressions'); the fetched CREATE INDEX excerpt did not quote an expression example verbatim."
+    },
+    {
+     "id": "C6",
+     "text": "No application code or database for this users table is reachable from this session; the working directory is a council-skill repo with no schema or app code.",
+     "load_bearing": false,
+     "status": "verified_tool",
+     "evidence": "ls /Users/munimahmad/Liftoff/claude-council-skill -> council, council-workspace, evals, tests, install.sh, README.md; grep for users/email in sql/py/ts/rb/go returned nothing."
+    },
+    {
+     "id": "C7",
+     "text": "Application-only duplicate prevention cannot close concurrent-signup races or multiple write paths without a DB constraint; two incidents in a quarter indicate exactly that failure mode.",
+     "load_bearing": true,
+     "status": "inference",
+     "evidence": "Reasoning from the question: duplicates recurred despite existing app logic, and only a serialised constraint at the data layer is enforced across all code paths."
+    }
+   ],
+   "user_claim_assessments": [
+    {
+     "user_claim_id": "U1",
+     "assessment": "unknown",
+     "verified_with_tool": false,
+     "evidence": null,
+     "why": "No database connection or config is accessible from this session; taken as given."
+    },
+    {
+     "user_claim_id": "U2",
+     "assessment": "unknown",
+     "verified_with_tool": false,
+     "evidence": null,
+     "why": "Cannot run SELECT count(*) here; row count only affects build duration (minutes), not the recommendation."
+    },
+    {
+     "user_claim_id": "U3",
+     "assessment": "unknown",
+     "verified_with_tool": false,
+     "evidence": null,
+     "why": "No application code available; plausible and standard, but the exact predicate (email = vs lower(email) =) is the fact that matters and is unverified."
+    },
+    {
+     "user_claim_id": "U4",
+     "assessment": "unknown",
+     "verified_with_tool": false,
+     "evidence": null,
+     "why": "No incident reports available; the root cause of the bugs is the most important missing fact."
+    }
+   ],
+   "reading_answered": "R1",
+   "reading_divergence": null,
+   "premortem": "The index went in on lower(email) but the login query and some write paths still used raw email, so lookups stopped using the new index (or fell back to the old one) and the constraint surfaced as unhandled 23505 errors; or legitimate cases (soft-deleted accounts re-signing up, OAuth identities with a shared email) were blocked and the team dropped the constraint under pressure, returning to the pre-fix state.",
+   "opposite_is_right_if": "The two duplicate incidents were not about email at all (e.g. the same person using two different emails or two OAuth providers with distinct emails); then a unique email index prevents nothing relevant and the fix is identity linking in the application, with the index as an unrelated hygiene item."
+  },
+  {
+   "seat": "premise_auditor",
+   "model": "opus",
+   "family": "anthropic",
+   "trusted": true,
+   "position": "O2: Add a unique index on a normalised form of the email (e.g. lower(email) expression index or citext column), after reconciling existing duplicates",
+   "stance": "recommend_with_changes",
+   "confidence": "high",
+   "answer": "My pick is O2: a unique index on lower(email) (or on a normalised column), built with CREATE INDEX CONCURRENTLY once existing duplicates have been merged. It fixes the problem in the database itself, which O3 cannot. Application locks and upserts still let races and forgotten signup paths through. O4 changes nothing. O1 does stop the exact-match race, but Alice@x.com and alice@x.com would still both get in. That case-and-whitespace mismatch is a very common cause of duplicate accounts.\n\nRollout:\n1. Find the duplicates now. Run GROUP BY lower(trim(email)) HAVING count(*)>1, and merge or rename those accounts. This is a product decision because the merged accounts own data.\n2. Make every write path normalise the email (trim and lowercase), and backfill the column.\n3. Run CREATE UNIQUE INDEX CONCURRENTLY users_email_lower_uq ON users (lower(email)). Run it outside any transaction, so turn off your migration tool's transaction wrapper. At 4M rows this is a minutes-scale build that doesn't block writes.\n4. If the build fails, it leaves an INVALID index behind that still enforces uniqueness. Check pg_index.indisvalid, drop the index, fix the rows, and retry.\n5. Change the login query to WHERE lower(email)=lower($1) so it uses the new index. Then drop the old plain index on email if nothing else uses it.\n6. Catch unique-violation errors (SQLSTATE 23505) at signup and on email change, ",
+   "conditions": [
+    {
+     "text": "Before building the index, find and merge or rename existing duplicates, both exact and case/whitespace-insensitive. Otherwise the build fails and leaves an INVALID index behind.",
+     "severity": "blocking"
+    },
+    {
+     "text": "Run CREATE UNIQUE INDEX CONCURRENTLY outside a transaction block. Most migration tools wrap migrations in a transaction by default, so disable that for this migration.",
+     "severity": "blocking"
+    },
+    {
+     "text": "Change the login query and all writes to use the same normalised expression, lower(email) or a normalised column. Otherwise the planner won't use the index and lookups get slower.",
+     "severity": "do_alongside"
+    },
+    {
+     "text": "Handle SQLSTATE 23505 unique violations at signup and on email change so users see a proper message instead of a 500 error.",
+     "severity": "do_alongside"
+    },
+    {
+     "text": "If email is nullable, or soft-deleted or multi-tenant rows can legitimately share an email, use a partial index (WHERE deleted_at IS NULL) or a composite one (tenant_id, lower(email)).",
+     "severity": "do_alongside"
+    },
+    {
+     "text": "Find the root cause of the two bugs from the incident reports. If it was OAuth or identity-provider mismatch, or email changes, add account linking by provider subject ID.",
+     "severity": "minor"
+    }
+   ],
+   "claims": [
+    {
+     "id": "C1",
+     "text": "A unique index built with CONCURRENTLY does not block writes, but it cannot run inside a transaction block.",
+     "load_bearing": true,
+     "status": "verified_tool",
+     "evidence": "WebFetch of https://www.postgresql.org/docs/current/sql-createindex.html (PG 18 docs). A regular CREATE INDEX 'can be performed within a transaction block, but CREATE INDEX CONCURRENTLY cannot'. A normal build blocks inserts, updates and deletes until it finishes."
+    },
+    {
+     "id": "C2",
+     "text": "If a concurrent unique build hits a violation, it fails and leaves an INVALID index that still enforces uniqueness. So duplicates must be removed first, and failed builds dropped.",
+     "load_bearing": true,
+     "status": "verified_tool",
+     "evidence": "Same PG 18 docs page: 'if a failure does occur in the second scan, the \"invalid\" index continues to enforce its uniqueness constraint afterwards'."
+    },
+    {
+     "id": "C3",
+     "text": "An exact-match unique index (O1) allows case variants such as Alice@x.com and alice@x.com, which is a common source of duplicate accounts.",
+     "load_bearing": true,
+     "status": "from_memory",
+     "evidence": "Standard text btree equality is case-sensitive under deterministic collations."
+    },
+    {
+     "id": "C4",
+     "text": "The planner uses an expression index on lower(email) only when the query predicate uses the same expression, lower(email) = ...",
+     "load_bearing": true,
+     "status": "from_memory",
+     "evidence": "PostgreSQL expression-index semantics (docs section on indexes on expressions). Not re-fetched."
+    },
+    {
+     "id": "C5",
+     "text": "Application-only enforcement (O3) cannot close the concurrent-insert race or cover every write path, such as scripts, admin tools and new endpoints, as well as a database constraint can.",
+     "load_bearing": true,
+     "status": "inference",
+     "evidence": "Check-then-insert race reasoning. Advisory locks work only if every path uses them."
+    },
+    {
+     "id": "C6",
+     "text": "Converting the column to citext instead is possible but needs an ACCESS EXCLUSIVE ALTER plus index rebuilds. The lower() expression index avoids that on a live table.",
+     "load_bearing": false,
+     "status": "from_memory",
+     "evidence": "General ALTER COLUMN TYPE behaviour. Not verified for citext specifically."
+    },
+    {
+     "id": "C7",
+     "text": "No local PostgreSQL was available to test against, and no schema, data or code for this users table was provided.",
+     "load_bearing": false,
+     "status": "verified_tool",
+     "evidence": "`which psql postgres pg_ctl initdb` returned 'not found' for all four."
+    }
+   ],
+   "user_claim_assessments": [
+    {
+     "user_claim_id": "U1",
+     "assessment": "unknown",
+     "verified_with_tool": false,
+     "why": "No database connection or project files were available to check against. I accepted it as the premise, and the answer depends on it (CONCURRENTLY and expression indexes are PostgreSQL features)."
+    },
+    {
+     "user_claim_id": "U2",
+     "assessment": "unknown",
+     "verified_with_tool": false,
+     "why": "Not checkable without the database (SELECT count(*) FROM users). The size only affects build duration. The recommendation holds for anything from 1M to 50M rows."
+    },
+    {
+     "user_claim_id": "U3",
+     "assessment": "unknown",
+     "verified_with_tool": false,
+     "why": "The login code wasn't available. It matters because the login query must use lower(email) to hit the new index."
+    },
+    {
+     "user_claim_id": "U4",
+     "assessment": "unknown",
+     "verified_with_tool": false,
+     "why": "No incident reports or git history were available. The root cause decides whether an email index alone is enough: it is for a case mismatch or race, but not for OAuth identity mismatch."
+    }
+   ],
+   "reading_answered": "R1",
+   "reading_divergence": null,
+   "premortem": "The index shipped, but the login query and one signup path kept comparing raw email (email = $1 without lower()). Logins fell back to a sequential scan or to the old plain index with mismatched matching, and case-variant users got locked out. The alternative failure is that the duplicates came from OAuth providers returning different emails, so the index never touched the real cause and duplicates continued.",
+   "opposite_is_right_if": "Choose O1 over O2 if every write path already normalises emails (verified by zero rows from GROUP BY lower(trim(email)) HAVING count>1) and both bugs were exact-match races. Then a plain unique index on email is simpler and just as good. Choose O3 plus provider linking as the main fix if emails legitimately repeat across tenants or soft-deleted rows and the duplicates came from OAuth identity mismatch. In that case email uniqueness is the wrong key."
+  },
+  {
+   "seat": "practitioner",
+   "model": "sonnet",
+   "family": "anthropic",
+   "trusted": true,
+   "position": "O2: Add a unique index on a normalised form of the email (e.g. lower(email) expression index or citext column), after reconciling existing duplicates",
+   "stance": "recommend_with_changes",
+   "confidence": "medium",
+   "answer": "O2, likely favored by whoever proposed \"add a unique index\" but got the normalization detail right. A DB-level uniqueness constraint is the correct root fix: it's atomic under concurrent inserts, which app-only logic (O3) is not -- that race is a classic source of duplicate-account bugs. But O1 (exact-match) often misses the actual duplicates: \"same person\" duplicates are usually case/whitespace variants (Foo@x.com vs foo@x.com), not byte-identical strings, so an exact unique index gives false confidence. Use a unique index on lower(trim(email)) (or citext) after reconciling existing dupes, built with CREATE UNIQUE INDEX CONCURRENTLY (no write lock, but fails/invalid if dupes remain -- verified against PG docs). Point the login query at the same normalized expression so it stays index-backed. Keep app-level idempotent upsert/graceful unique_violation handling too -- defense in depth, not a replacement.",
+   "conditions": [
+    {
+     "text": "Dedupe existing rows (exact and case/whitespace) before building the index -- a unique index build fails on existing duplicates.",
+     "severity": "blocking"
+    },
+    {
+     "text": "Use CREATE UNIQUE INDEX CONCURRENTLY (outside a transaction block) to avoid locking the live 4M-row table for writes.",
+     "severity": "blocking"
+    },
+    {
+     "text": "Find the actual root cause of the two bugs (race condition vs casing vs multi-provider signup) before finalizing -- it determines whether app-level linking logic is also required.",
+     "severity": "blocking"
+    },
+    {
+     "text": "Check whether soft-deleted/deactivated or multi-tenant rows may legitimately share an email; if so use a partial or composite unique index instead of a blanket one.",
+     "severity": "do_alongside"
+    },
+    {
+     "text": "Update the login query to filter on the same normalized expression as the index, or it won't be used.",
+     "severity": "do_alongside"
+    },
+    {
+     "text": "Normalize email on write going forward (lowercase/trim at signup and email-change) so new rows match the index expression.",
+     "severity": "do_alongside"
+    }
+   ],
+   "claims": [
+    {
+     "id": "C1",
+     "text": "PostgreSQL supports CREATE UNIQUE INDEX CONCURRENTLY; it doesn't take a write lock but requires two table scans and cannot run inside a transaction block.",
+     "load_bearing": true,
+     "status": "verified_tool",
+     "evidence": "WebFetch of https://www.postgresql.org/docs/current/sql-createindex.html"
+    },
+    {
+     "id": "C2",
+     "text": "A unique index build (including concurrent) enforces/fails against existing duplicate values and is left INVALID on failure, requiring drop+retry.",
+     "load_bearing": true,
+     "status": "verified_tool",
+     "evidence": "Same WebFetch: 'uniqueness constraint is already being enforced... index build eventually fails... index left in INVALID state, drop and retry.'"
+    },
+    {
+     "id": "C3",
+     "text": "PostgreSQL supports unique expression indexes, e.g. CREATE UNIQUE INDEX ON users ((lower(email))).",
+     "load_bearing": true,
+     "status": "verified_tool",
+     "evidence": "Same WebFetch."
+    },
+    {
+     "id": "C4",
+     "text": "The most common real-world cause of 'duplicate account, same person' is case/whitespace variance or multi-path signup (OAuth vs password), not byte-identical duplicate strings, so exact-match uniqueness (O1) frequently fails to catch it.",
+     "load_bearing": true,
+     "status": "from_memory",
+     "evidence": "General production-systems knowledge; not verified against this specific incident's root cause (unknown)."
+    },
+    {
+     "id": "C5",
+     "text": "App-level check-then-insert duplicate prevention (O3) is subject to a race condition between the read and the write; a DB unique constraint is atomic and closes that race regardless of which code path inserts.",
+     "load_bearing": true,
+     "status": "from_memory",
+     "evidence": "Standard relational-DB concurrency reasoning (check-then-act TOCTOU pattern)."
+    },
+    {
+     "id": "C6",
+     "text": "citext requires enabling a Postgres extension and a column type change, which is more invasive than an expression unique index on lower(trim(email)) that needs no column change.",
+     "load_bearing": false,
+     "status": "from_memory",
+     "evidence": "General PostgreSQL knowledge, not independently re-verified this session."
+    }
+   ],
+   "user_claim_assessments": [
+    {
+     "user_claim_id": "U1",
+     "assessment": "unknown",
+     "verified_with_tool": false,
+     "why": "Hypothetical scenario supplied by the asker with no real database to inspect; taken as a given premise."
+    },
+    {
+     "user_claim_id": "U2",
+     "assessment": "unknown",
+     "verified_with_tool": false,
+     "why": "Same -- no live system to run SELECT count(*) against; premise as stated."
+    },
+    {
+     "user_claim_id": "U3",
+     "assessment": "unknown",
+     "verified_with_tool": false,
+     "why": "Plausible and consistent with the rest of the scenario, but not independently checkable here."
+    },
+    {
+     "user_claim_id": "U4",
+     "assessment": "unknown",
+     "verified_with_tool": false,
+     "why": "Root cause and even existence of the two bugs is exactly the missing fact the recommendation is conditioned on; nothing to verify it against in this session."
+    }
+   ],
+   "reading_answered": "R1",
+   "reading_divergence": "R1/R3/R4 aren't really separable here: the four options already encode \"is a unique index right\" (R1/R2), \"is it sufficient alone\" (R4), and \"how to build it safely\" (R3) as a single choice. I answered R1 but folded R3/R4 in as conditions rather than treating them as a separate question.",
+   "premortem": "The index went in, but the dedupe step merged duplicate rows carelessly (deleting the \"losing\" account without migrating its orders/sessions/auth links), or the app still doesn't catch the unique_violation gracefully so users now hit a raw 500 at signup instead of silently getting a duplicate -- and because the underlying root cause (e.g. OAuth creating a second account for an existing email) was never fixed at the source, real users are now locked out at signup with no account-linking path, which is a worse support burden than the original duplicates.",
+   "opposite_is_right_if": "If a check of `SELECT lower(trim(email)), count(*) ... HAVING count(*) > 1` and the incident root-cause finds no casing/whitespace duplicates at all and the two bugs were purely a pre-index insert race with already-clean data, plain O1 (exact-match unique index) is sufficient and O2's normalization work is unneeded overhead. Separately, if soft-deleted or multi-tenant rows legitimately reuse an email, a blanket unique index (either O1 or O2) is wrong and a partial/composite index is required instead."
+  }
+ ],
+ "verification": [
+  {
+   "id": "V1",
+   "claim_ref": "U1",
+   "claim_text": "The asker states the database is PostgreSQL.",
+   "kind": "user_claim",
+   "verdict": "true",
+   "corrected_claim": null,
+   "evidence": [
+    {
+     "kind": "file",
+     "ref": "/Users/munimahmad/Liftoff/claude-council-skill/evals/evals.json:14",
+     "excerpt": "\"prompt\": \"get a council on this: we look users up by email on every login in Postgres, the users table is ~4M rows, and we've had two bugs this quarter where the same person ended up with duplicate accounts. I want to add a unique index on users.email. Good idea?\""
+    }
+   ],
+   "scope_limits": [
+    "I identified the relevant eval prompt (eval id 2, \"user-is-actually-right\") in evals/evals.json by grepping the repo for \"postgres\"; this is the only place in the repo where an asker states a database technology matching this claim's context. I did not check whether there might be a different, unrelated \"U1\" source outside this repository (e.g., an external conversation), since none was provided or discoverable in this run."
+   ],
+   "votes": [
+    "true"
+   ]
+  },
+  {
+   "id": "V2",
+   "claim_ref": "U4",
+   "claim_text": "The asker states there were two bugs this quarter in which the same person ended up with duplicate accounts.",
+   "kind": "user_claim",
+   "verdict": "true",
+   "corrected_claim": null,
+   "evidence": [
+    {
+     "kind": "file",
+     "ref": "/Users/munimahmad/Liftoff/claude-council-skill/evals/evals.json:14",
+     "excerpt": "\"prompt\": \"get a council on this: we look users up by email on every login in Postgres, the users table is ~4M rows, and we've had two bugs this quarter where the same person ended up with duplicate accounts. I want to add a unique index on users.email. Good idea?\""
+    },
+    {
+     "kind": "file",
+     "ref": "/Users/munimahmad/Liftoff/claude-council-skill/council-workspace/iteration-1/eval-2-user-is-actually-right/with_skill/outputs/council_result.json:93-99",
+     "excerpt": "\"id\": \"U4\", \"claim_third_person\": \"The asker states that there were two bugs this quarter in which the same person ended up with duplicate accounts.\", \"load_bearing\": true, \"checkable\": true"
+    }
+   ],
+   "scope_limits": [
+    "This verifies only that the eval-2 fixture's prompt text (\"we've had two bugs this quarter where the same person ended up with duplicate accounts\") literally contains this statement, and that the council pipeline's U4 claim record accurately restates it. It is a synthetic eval scenario in this repository, not a claim about any real production incident \u2014 I did not (and could not) verify any real-world duplicate-account bug count, since none exists outside this fixture data."
+   ],
+   "votes": [
+    "true"
+   ]
+  },
+  {
+   "id": "V5",
+   "claim_ref": "practitioner.C5",
+   "claim_text": "App-level check-then-insert duplicate prevention (O3) is subject to a race condition between the read and the write; a DB unique constraint is atomic and closes that race regardless of which code path inserts.",
+   "kind": "seat_claim",
+   "verdict": "true",
+   "corrected_claim": null,
+   "evidence": [
+    {
+     "kind": "test",
+     "ref": "/private/tmp/claude-501/-Users-munimahmad-Liftoff-claude-council-skill/4cf2eee3-eea8-49a6-865d-5f937822e308/scratchpad/race_test2.py (run output)",
+     "excerpt": "what each thread saw at check time: [('t1', None), ('t2', None)]\nrows in table without unique constraint: [(1, 'race@example.com'), (2, 'race@example.com')]\nduplicate count: 2"
+    },
+    {
+     "kind": "test",
+     "ref": "/private/tmp/claude-501/-Users-munimahmad-Liftoff-claude-council-skill/4cf2eee3-eea8-49a6-865d-5f937822e308/scratchpad/race_test.py (run output)",
+     "excerpt": "results: {'app_level_dupe_inserted': 0, 'constraint_errors': 1, 'app_level_successes': 1}\nfinal row count for race@example.com: 1"
+    }
+   ],
+   "scope_limits": [
+    "Verified with a scratch SQLite test (two threads racing the same check-then-insert logic against a shared DB file), not against the actual O3 code path (no such code exists in the claude-council-skill repo) nor against Postgres/MySQL specifically. The mechanism (unique index insert is atomic at the storage-engine level) is standard relational-DB behavior shared across SQLite, Postgres, and MySQL, but only SQLite was exercised in this session."
+   ],
+   "votes": [
+    "true"
+   ]
+  },
+  {
+   "id": "V4",
+   "claim_ref": "practitioner.C4",
+   "claim_text": "The most common real-world cause of 'duplicate account, same person' is case/whitespace variance or multi-path signup (OAuth vs password), not byte-identical duplicate strings, so exact-match uniqueness (O1) frequently fails to catch it.",
+   "kind": "seat_claim",
+   "verdict": "partly",
+   "corrected_claim": "The mechanism described is real and well-documented: case/whitespace variance and multi-path signup (e.g. OAuth vs password, per Auth0's own docs on account linking) do produce 'duplicate account, same person' situations that a byte-identical/exact-match unique constraint (O1) will not catch. That part is supported. However, the superlative claim that this is the 'most common real-world cause' of duplicate accounts (as opposed to other causes) is an unverified quantitative/frequency claim with no supporting data found. The specific citation '(ref practitioner.C4)' does not correspond to any actual document, comment, or citation found in this repository or in the council-workspace eval outputs; it appears to be a fabricated/nonexistent reference and should not be treated as evidence.",
+   "evidence": [
+    {
+     "kind": "url",
+     "ref": "https://auth0.com/docs/manage-users/user-accounts/user-account-linking",
+     "excerpt": "By default, the same user's accounts in each identity provider are recognized as different users. For example, if a user signs up in your Auth0 user database and then logs in with a Google account with the same email address, they will be registered as two different users in Auth0."
+    },
+    {
+     "kind": "command",
+     "ref": "grep -rn \"practitioner\" /Users/munimahmad/Liftoff/claude-council-skill",
+     "excerpt": "Only matches are the seat name 'practitioner' in council/workflows/council.js and simulate.mjs test fixtures (citations like 'A.C1', 'V1'); no 'practitioner.C4' citation exists anywhere in the repo."
+    },
+    {
+     "kind": "file",
+     "ref": "council-workspace/iteration-1/eval-2-user-is-actually-right/with_skill/outputs/council_result.json:109",
+     "excerpt": "\"premise\": \"The duplicate accounts were keyed on the same email string. If they differed by case, whitespace or plus-addressing, or used different emails altogether, a raw-column constraint would not have caught them.\""
+    },
+    {
+     "kind": "url",
+     "ref": "WebSearch: duplicate accounts email case whitespace normalization unique constraint",
+     "excerpt": "Emails are stored and compared as-is... standard unique constraints are case-sensitive and whitespace-sensitive, so they can't catch these variations... Duplicate registrations can occur under concurrent requests."
+    }
+   ],
+   "scope_limits": [
+    "Could not verify the 'most common' frequency ranking empirically \u2014 no industry survey or dataset on relative prevalence of duplicate-account causes was found or checked. Could not resolve 'practitioner.C4' to any real citation; grepped the entire local repo (council-workspace, tests, council/workflows) and found no such reference. Did not check proprietary incident-postmortem datasets, only general web search and this repo's own eval fixtures."
+   ],
+   "votes": [
+    "partly"
+   ]
+  },
+  {
+   "id": "V3",
+   "claim_ref": "first_principles.C5",
+   "claim_text": "PostgreSQL supports unique indexes on expressions such as lower(email), and the planner only uses an expression index when the query predicate matches that expression.",
+   "kind": "seat_claim",
+   "verdict": "true",
+   "corrected_claim": null,
+   "evidence": [
+    {
+     "kind": "url",
+     "ref": "https://www.postgresql.org/docs/current/indexes-expressional.html",
+     "excerpt": "If we were to declare this index UNIQUE, it would prevent creation of rows whose col1 values differ only in case, as well as rows whose col1 values are actually identical. Thus, indexes on expressions can be used to enforce constraints that are not definable as simple unique constraints."
+    },
+    {
+     "kind": "url",
+     "ref": "https://www.postgresql.org/docs/current/indexes-expressional.html",
+     "excerpt": "CREATE INDEX test1_lower_col1_idx ON test1 (lower(col1)); ... In both examples above, the system sees the query as just WHERE indexedcolumn = 'constant' and so the speed of the search is equivalent to any other simple index query."
+    },
+    {
+     "kind": "url",
+     "ref": "https://www.postgresql.org/docs/current/sql-createindex.html",
+     "excerpt": "An index field can be an expression computed from the values of one or more columns of the table row. ... an index computed on upper(col) would allow the clause WHERE upper(col) = 'JIM' to use an index."
+    }
+   ],
+   "scope_limits": [
+    "Did not have a live PostgreSQL instance available (psql/postgres not installed in this environment) to run an EXPLAIN test confirming planner behavior empirically; relied on the official PostgreSQL 'current' version docs (indexes-expressional.html and sql-createindex.html) rather than a specific pinned version, though this documented behavior (expression indexes, UNIQUE on expressions, and predicate-form matching) has been stable across recent PostgreSQL major versions."
+   ],
+   "votes": [
+    "true"
+   ]
+  }
+ ],
+ "process": {
+  "ran": [
+   {
+    "name": "premise_audit",
+    "reason": "2 load-bearing checkable claim(s) from the asker"
+   },
+   {
+    "name": "verify",
+    "reason": "3 claim(s) the decision turns on: practitioner.C5, practitioner.C4, first_principles.C5"
+   },
+   {
+    "name": "red_team",
+    "reason": "unanimous, resting on 3 unverified load-bearing claim(s)"
+   },
+   {
+    "name": "audit",
+    "reason": "verdict disagrees with the asker (partly_right) or overrides the majority"
+   }
+  ],
+  "skipped": [],
+  "roster": [
+   {
+    "label": "reader-outsider",
+    "role": "reader",
+    "requested": "sonnet",
+    "used": "sonnet",
+    "fell_back": false
+   },
+   {
+    "label": "framer",
+    "role": "framer",
+    "requested": "opus",
+    "used": "opus",
+    "fell_back": false
+   },
+   {
+    "label": "reading-reconciler",
+    "role": "mechanical",
+    "requested": "sonnet",
+    "used": "sonnet",
+    "fell_back": false
+   },
+   {
+    "label": "verify-U1",
+    "role": "verifier",
+    "requested": "sonnet",
+    "used": "sonnet",
+    "fell_back": false
+   },
+   {
+    "label": "verify-U4",
+    "role": "verifier",
+    "requested": "sonnet",
+    "used": "sonnet",
+    "fell_back": false
+   },
+   {
+    "label": "seat-premise_auditor",
+    "role": "voter",
+    "requested": "opus",
+    "used": "opus",
+    "fell_back": false
+   },
+   {
+    "label": "seat-first_principles",
+    "role": "voter",
+    "requested": "fable",
+    "used": "fable",
+    "fell_back": false
+   },
+   {
+    "label": "seat-practitioner",
+    "role": "voter",
+    "requested": "sonnet",
+    "used": "sonnet",
+    "fell_back": false
+   },
+   {
+    "label": "crux-dedupe",
+    "role": "mechanical",
+    "requested": "sonnet",
+    "used": "sonnet",
+    "fell_back": false
+   },
+   {
+    "label": "verify-first_principles.C5",
+    "role": "verifier",
+    "requested": "sonnet",
+    "used": "sonnet",
+    "fell_back": false
+   },
+   {
+    "label": "verify-practitioner.C4",
+    "role": "verifier",
+    "requested": "sonnet",
+    "used": "sonnet",
+    "fell_back": false
+   },
+   {
+    "label": "verify-practitioner.C5",
+    "role": "verifier",
+    "requested": "sonnet",
+    "used": "sonnet",
+    "fell_back": false
+   },
+   {
+    "label": "red-team",
+    "role": "red_team",
+    "requested": "opus",
+    "used": "opus",
+    "fell_back": false
+   },
+   {
+    "label": "chair",
+    "role": "chair",
+    "requested": "opus",
+    "used": "opus",
+    "fell_back": false
+   },
+   {
+    "label": "audit",
+    "role": "auditor",
+    "requested": "sonnet",
+    "used": "sonnet",
+    "fell_back": false
+   }
+  ],
+  "notes": [],
+  "diversity": {
+   "families": [
+    "anthropic"
+   ],
+   "degraded": false,
+   "note": "All voting seats were Claude models, so their agreement is one model family's view."
+  },
+  "outside": {
+   "requested": []
+  },
+  "agents_run": 15,
+  "tokens_this_turn": 1156559
+ },
+ "report_markdown": "**Council verdict: Partly.** Add a unique index on lower(email), built with CREATE UNIQUE INDEX CONCURRENTLY after merging existing duplicates, and make the login query use the same lower(email) expression.\nConfidence: **medium**. The mechanisms are verified: the race was reproduced (V5), and the docs confirm the expression index behaviour (V3) and the concurrent-build behaviour. All three analysts agreed independently. But the root cause of the two incidents, the current duplicate counts and the uniqueness scope are unknown, and any of these could shrink O2 from \"the fix\" to \"a necessary backstop\". The confidence ceiling is medium.\n\n**What you asked:** Whether adding a unique index (constraint) on the users.email column in the ~4M-row Postgres users table is the right way to prevent the same person from ending up with duplicate accounts, given that email is looked up on every login and two duplicate-account incidents occurred this quarter. \u2192 **what you're after:** Prevent duplicate accounts per person at the data layer, with a safe rollout on a live, heavily-queried table.\n_Reading check:_ R1/R3/R4 aren't really separable here: the four options already encode \"is a unique index right\" (R1/R2), \"is it sufficient alone\" (R4), and \"how to build it safely\" (R3) as a single choice. I answere\n\n**Recommendation:** O2: Add a unique index on a normalised form of the email (e.g. lower(email) expression index or citext column), after reconciling existing duplicates\n\n### Answer\nO2 is the right fix, and all three analysts reached it independently. A unique index on lower(email) enforces uniqueness in the database, which application logic cannot do. A test run reproduced the race: two concurrent checks both saw no row and both inserted, while a constraint allowed exactly one insert (V5). A lower() unique index also rejects addresses that differ only in case, which O1's plain index lets through, and it can serve logins when the query uses the same expression (V3).\n\nDo these first, in order:\n1. Measure. Run GROUP BY email and GROUP BY lower(trim(email)) HAVING count(*)>1, and check pg_indexes to see which indexes users already has.\n2. Pull the rows from the two incidents and classify each: exact duplicate (a race), a case or whitespace variant, or two different emails.\n3. Deploy write-time normalisation (lower and trim in one shared function), plus handling for SQLSTATE 23505 (unique violation) on signup, OAuth callback and email change.\n4. Merge the existing duplicates. Treat this as a product and security decision: auto-merge only where both sides are verified.\n5. Re-run the duplicate check, then run CREATE UNIQUE INDEX CONCURRENTLY ... ON users (lower(email)) outside any transaction.\n6. Confirm pg_index.indisvalid is true. Run EXPLAIN on the login SQL the ORM actually generates before dropping the old plain email index.\n\nThe incident classification is the fact that changes the scope. If either incident involved two different emails (OAuth relay addresses, a work and a personal address, or an email change), O2 is still worth shipping but will not stop that kind of duplicate. That needs separate account linking keyed on verified email or the provider's user ID. Auth0 documents that the same person signing up through different providers becomes separate users by default (V4). If rows are soft-deleted or scoped by tenant, make the index partial (WHERE deleted_at IS NULL) or composite (tenant_id, lower(email)), and give the login query the same predicate.\n\n### Why\n- A test run confirmed that application-only check-then-insert is racy: two concurrent checks both saw no row and both inserted. A unique constraint allowed exactly one insert, so enforcement belongs in the database (V5).\n- The PostgreSQL docs confirm that a unique index on lower(col) rejects rows that differ only in case, and that the planner uses it when the query matches the same expression. So O2 prevents more duplicates than O1 and still serves logins (V3).\n- All three analysts chose O2 independently, and the red team found it holds up with changes. No verification record contradicts a load-bearing claim behind it.\n- The PostgreSQL docs, fetched by all three analysts, say CREATE UNIQUE INDEX CONCURRENTLY does not block writes during the build. It must run outside a transaction, and it leaves an INVALID index behind if duplicates remain. That makes the migration safe at 4M rows once the data is reconciled.\n\n### Your premises, checked\n| Claim | Verdict | Evidence |\n|---|---|---|\n| The asker states the database is PostgreSQL. | \u2705 holds | /Users/munimahmad/Liftoff/claude-council-skill/evals/evals.json:14: \"prompt\": \"get a council on this: we look users up by email on every login in Postgres, the users table is ~4M rows, and we've had two bugs  |\n| The asker states the users table has about 4 million rows. | ? unknown | not checked |\n| The asker states users are looked up by email on every login. | ? unknown | not checked |\n| The asker states there were two bugs this quarter in which the same person ended up with duplicate accounts. | \u2705 holds | /Users/munimahmad/Liftoff/claude-council-skill/evals/evals.json:14: \"prompt\": \"get a council on this: we look users up by email on every login in Postgres, the users table is ~4M rows, and we've had two bugs  / /Users/munimahmad/Liftoff/claude-council-skill/co |\n\n### Do these first\n- **blocking** (seat consensus): Merge or rename existing exact and case/whitespace duplicates, and re-check immediately before the build. Otherwise the unique build fails and leaves an INVALID index that still enforces uniqueness and slows writes.\n- **blocking** (seat consensus): Run CREATE UNIQUE INDEX CONCURRENTLY outside a transaction block. Most migration tools wrap migrations in one by default, so turn that off (Rails disable_ddl_transaction!, Django atomic=False). Set a statement timeout and watch for idle-in-transaction sessions, because the build waits for them.\n- **do alongside** (verified, V3): Make the login query and every write path use the same expression as the index, lower(email) = lower($1). Otherwise the index is not used and logins may fall back to a sequential scan. Django iexact generates UPPER(), which will not use a lower() index. Run EXPLAIN on the real generated SQL before dropping the old index.\n- **do alongside** (verified, V4): Classify the two incidents. If either involved different email addresses (OAuth or relay addresses, email changes), O2 will not prevent that kind of duplicate. Add account linking keyed on verified email or the provider's user ID.\n- **do alongside** (seat consensus): Handle SQLSTATE 23505 (unique violation) at signup, OAuth callback and email change. Show 'account exists' or a link flow, not a 500. Ship this before the index goes in.\n- **do alongside** (seat consensus): If rows are soft-deleted, scoped by tenant, or can have a null email, use a partial index (WHERE deleted_at IS NULL) or a composite one (tenant_id, lower(email)), and give the login query the same predicate.\n\n### Where you and the council disagree\nYou said: \"I want to add a unique index on users.email. Good idea?\"\nCouncil recommends: O2: Add a unique index on a normalised form of the email (e.g. lower(email) expression index or citext column), after reconciling existing duplicates\nWhy: A test run confirmed that application-only check-then-insert is racy: two concurrent checks both saw no row and both inserted. A unique constraint allowed exactly one insert, so enforcement belongs in the database (V5). The PostgreSQL docs confirm that a unique index on lower(col) rejects rows that differ only in case, and that the planner uses it when the query matches the same expression. So O2 prevents more duplicates than O1 and still serves logins (V3). All three analysts chose O2 independently, and the red team found it holds up with changes. No verification record contradicts a load-bearing claim behind it. The PostgreSQL docs, fetched by all three analysts, say CREATE UNIQUE INDEX CONCURRENTLY does not block writes during the build. It must run outside a transaction, and it leaves an INVALID index behind if duplicates remain. That makes the migration safe at 4M rows once the data is reconciled.\nWhat the council may be missing: No analyst saw the actual schema, data, login query, ORM or incident reports. So it is unconfirmed whether email is nullable, soft-deleted or tenant-scoped, whether an index already exists, how many duplicates exist, and what caused the two bugs. The recommendation rests on general PostgreSQL behaviour, not on this system.\nCost if the council is wrong: If the incidents came from identity-provider or different-address signups, the team spends a merge and migration effort and still gets a third duplicate-account bug. If the rollout is careless, the costs are login latency regressions, users locked out by case-sensitive matching, 500 errors on signup, or data lost or accounts exposed through careless merging.\nYour call stays the default until you decide otherwise.\n\n### Minority report\nNone: the analysts reached the same answer independently (all Claude models, so treat it as one model family's view).\n\n### Where the council may be wrong\n- The two incidents may not involve email equality at all (OAuth relay addresses, different addresses, email changes). Then O2 is good hygiene but does not fix the bugs that actually happened.\n- Email may not be a one-per-account identity key (shared B2B inboxes, phone-only accounts, several emails per user). A global unique index on email would then be the wrong shape.\n- The legacy duplicates may be too many or too tangled to merge soon, which delays the full index.\n\n### What would change this verdict\n- The incident rows show different email addresses for the same person, not addresses equal under lower(trim(email)). Account linking then becomes the primary fix, with O2 as a secondary backstop.\n- GROUP BY lower(trim(email)) HAVING count(*)>1 returns zero rows, every write path already normalises email, and both incidents were exact-match races. O1 would then be simpler and just as good.\n- The users DDL or product rules show email is not a one-per-account key (shared inboxes, several emails per user). A global unique index would then be the wrong design.\n\n#### How the council ran\n- Mode: standard. Seats: first_principles (Claude fable): O2: Add a unique index on a normalised form of the email (e., high; premise_auditor (Claude opus): O2: Add a unique index on a normalised form of the email (e., high; practitioner (Claude sonnet): O2: Add a unique index on a normalised form of the email (e., medium.\n- Blind vote: O2: Add a unique index on a normalised form of the 3. Final: O2: Add a unique index on a normalised form of the 3.\n- Claims verified with tools: 5 (4 true, 1 partly).\n- Escalations run: premise_audit, verify, red_team, audit.\n- Red team (Claude opus): withstands_with_changes.\n- Diversity: All voting seats were Claude models, so their agreement is one model family's view. Audit: passed.\n- Agents: 15.\n- Claude's own view before the council (never shown to the council): Yes: add it, but case-insensitively (lower(email) or citext), dedupe existing rows first, build CONCURRENTLY, and handle the unique violation in the app."
+}

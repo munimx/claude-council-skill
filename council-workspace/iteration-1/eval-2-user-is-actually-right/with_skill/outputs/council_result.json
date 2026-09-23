@@ -1,0 +1,207 @@
+{
+ "status": "needs_clarification",
+ "mode": "standard",
+ "interpretation": {
+  "neutral_question": "A PostgreSQL users table holds about 4 million rows, and users are looked up by email on every login. Twice this quarter, bugs left the same person with duplicate accounts. Which of the following best prevents duplicate accounts per person, while keeping login lookups efficient and avoiding production disruption and data-migration risk on a table this size? The email normalisation rules, the current indexes, the root cause of the two bugs and the migration tooling are not known.",
+  "answer_type": "decision",
+  "readings": [
+   {
+    "id": "R1",
+    "literal_ask": "Should a/the unique index (or constraint) be added on users.email \u2014 a yes/no verdict on whether this is a good idea given the stated context.",
+    "underlying_goal": "Stop duplicate accounts from being created again, enforced at the database level; get outside validation before implementing a fix already decided on.",
+    "mean_p": 0.475,
+    "support": [
+     "framer",
+     "outsider"
+    ],
+    "how_answer_differs": "Answer is a fairly direct verdict + rationale on the index itself: whether it would catch the actual duplicates, correctness/lookup-performance impact, and index-build cost/locking \u2014 without necessarily digging into root cause of the bugs or cleanup of existing duplicates."
+   },
+   {
+    "id": "R3",
+    "literal_ask": "Is the proposed unique index actually the right fix for the two duplicate-account bugs, or just a fix?",
+    "underlying_goal": "Eliminate the real root cause of the duplicate-account bug class, which may not be a missing constraint at all (case/whitespace normalization, OAuth/SSO account linking, email changes, non-atomic check-then-insert race conditions, soft-deleted/merged accounts).",
+    "mean_p": 0.275,
+    "support": [
+     "framer",
+     "outsider"
+    ],
+    "how_answer_differs": "Answer surfaces and questions the hidden premise that lack-of-constraint caused the bugs; if the duplicates came from different email values, case-sensitivity, or identity-provider linking, the answer moves away from a bare email index toward normalization and/or identity-linking logic rather than confirming the index as sufficient."
+   },
+   {
+    "id": "R2",
+    "literal_ask": "Is a unique index on email a good way to both speed up the per-login email lookup and prevent duplicates \u2014 does it serve a dual purpose?",
+    "underlying_goal": "Get efficient login lookups and data integrity from one schema change, not just fix the integrity bug in isolation.",
+    "mean_p": 0.175,
+    "support": [
+     "framer",
+     "outsider"
+    ],
+    "how_answer_differs": "Answer must check whether a non-unique index on email already exists for lookup, whether login queries match the index expression (e.g. lower(email) vs email), and how a unique index relates to/replaces that existing index \u2014 a mismatch would leave login performance unchanged even if dedup works."
+   },
+   {
+    "id": "R4",
+    "literal_ask": "How to safely execute the unique-index migration on the live 4M-row Postgres users table.",
+    "underlying_goal": "Avoid a production incident while rolling out the fix \u2014 non-locking build, handling pre-existing duplicate rows that would fail index creation, and deployment sequencing.",
+    "mean_p": 0.075,
+    "support": [
+     "outsider"
+    ],
+    "how_answer_differs": "Answer focuses on execution mechanics (e.g. CREATE UNIQUE INDEX CONCURRENTLY, finding/resolving existing duplicate rows first, rollout sequencing) rather than on whether the index is conceptually the right idea or the right fix for root cause."
+   }
+  ],
+  "options": [
+   {
+    "id": "O1",
+    "label": "Add a unique index on the raw users.email column (with any existing duplicates resolved first)"
+   },
+   {
+    "id": "O2",
+    "label": "Add a unique index on a normalised form of email (e.g. lower(email) expression index or a case-insensitive type), with existing duplicates resolved first"
+   },
+   {
+    "id": "O3",
+    "label": "Fix duplicate prevention in application logic (e.g. atomic get-or-create / upsert, signup race handling) without adding a database uniqueness constraint"
+   },
+   {
+    "id": "O4",
+    "label": "Add or keep only a non-unique index on email for lookup performance and handle duplicates through detection and merge processes"
+   },
+   {
+    "id": "O5",
+    "label": "Keep the schema and code as they are"
+   }
+  ],
+  "user_claims": [
+   {
+    "id": "U1",
+    "claim_third_person": "The asker states that the database is PostgreSQL.",
+    "load_bearing": true,
+    "checkable": true
+   },
+   {
+    "id": "U2",
+    "claim_third_person": "The asker states that the users table has approximately 4 million rows.",
+    "load_bearing": false,
+    "checkable": true
+   },
+   {
+    "id": "U3",
+    "claim_third_person": "The asker states that users are looked up by email on every login.",
+    "load_bearing": false,
+    "checkable": true
+   },
+   {
+    "id": "U4",
+    "claim_third_person": "The asker states that there were two bugs this quarter in which the same person ended up with duplicate accounts.",
+    "load_bearing": true,
+    "checkable": true
+   },
+   {
+    "id": "U5",
+    "claim_third_person": "The asker implies that the duplicate accounts share the same email value (so that uniqueness on users.email would have prevented them).",
+    "load_bearing": true,
+    "checkable": true
+   }
+  ],
+  "premises": [
+   {
+    "id": "P1",
+    "premise": "The duplicate accounts were keyed on the same email string. If they differed by case, whitespace or plus-addressing, or used different emails altogether, a raw-column constraint would not have caught them.",
+    "source": "implied"
+   },
+   {
+    "id": "P2",
+    "premise": "Email is, and should be, a one-per-person identity key in this system (no shared emails, no soft-deleted rows reusing emails, no multi-tenant scoping).",
+    "source": "implied"
+   },
+   {
+    "id": "P3",
+    "premise": "No unique constraint or unique index on users.email exists today.",
+    "source": "implied"
+   },
+   {
+    "id": "P4",
+    "premise": "It is feasible to build an index on a live 4M-row table (e.g. CREATE UNIQUE INDEX CONCURRENTLY) without unacceptable downtime.",
+    "source": "implied"
+   },
+   {
+    "id": "P5",
+    "premise": "Any duplicates already in the table can be found and resolved before the constraint is added; otherwise index creation fails.",
+    "source": "implied"
+   },
+   {
+    "id": "P6",
+    "premise": "A database-level constraint is the appropriate layer to enforce this invariant, as opposed to application logic alone.",
+    "source": "implied"
+   }
+  ],
+  "stakes": {
+   "level": "medium",
+   "reversibility": "reversible",
+   "rationale": "An index can be dropped. However, building it on a live 4M-row table can lock the table or fail partway if duplicates exist, and a new constraint can break signup or login flows that rely on case variants or reuse emails. Deduplicating existing rows means merging accounts, which is hard to undo."
+  },
+  "unresolvable_referents": [
+   "\"the same person\": whether the duplicates share an identical email string, differ only by case or format, or use different emails",
+   "\"two bugs\": their root cause and code path (signup race, SSO/OAuth linking, email change, import) are not described"
+  ],
+  "ambiguous": true,
+  "material": true
+ },
+ "clarification": {
+  "question": "In the two duplicate-account incidents, did the duplicate rows have exactly the same email string, a case or format variant, or different emails altogether?",
+  "why_it_matters": "R1 and R2 lead to mostly the same recommendation. The recommendation changes only if the root cause (R3) involves non-identical emails, which a raw email constraint would not catch.",
+  "options": [
+   {
+    "reading_id": "R1",
+    "label": "Should a/the unique index (or constraint) be added on users.email \u2014 a yes/no verdict on whether this is a good idea given the stated context.",
+    "underlying_goal": "Stop duplicate accounts from being created again, enforced at the database level; get outside validation before implementing a fix already decided on.",
+    "how_answer_differs": "Answer is a fairly direct verdict + rationale on the index itself: whether it would catch the actual duplicates, correctness/lookup-performance impact, and index-build cost/locking \u2014 without necessarily digging into root cause of the bugs or cleanup of existing duplicates."
+   },
+   {
+    "reading_id": "R3",
+    "label": "Is the proposed unique index actually the right fix for the two duplicate-account bugs, or just a fix?",
+    "underlying_goal": "Eliminate the real root cause of the duplicate-account bug class, which may not be a missing constraint at all (case/whitespace normalization, OAuth/SSO account linking, email changes, non-atomic check-then-insert race conditions, soft-deleted/merged accounts).",
+    "how_answer_differs": "Answer surfaces and questions the hidden premise that lack-of-constraint caused the bugs; if the duplicates came from different email values, case-sensitivity, or identity-provider linking, the answer moves away from a bare email index toward normalization and/or identity-linking logic rather than confirming the index as sufficient."
+   },
+   {
+    "reading_id": "R2",
+    "label": "Is a unique index on email a good way to both speed up the per-login email lookup and prevent duplicates \u2014 does it serve a dual purpose?",
+    "underlying_goal": "Get efficient login lookups and data integrity from one schema change, not just fix the integrity bug in isolation.",
+    "how_answer_differs": "Answer must check whether a non-unique index on email already exists for lookup, whether login queries match the index expression (e.g. lower(email) vs email), and how a unique index relates to/replaces that existing index \u2014 a mismatch would leave login performance unchanged even if dedup works."
+   }
+  ],
+  "unresolvable_referents": [
+   "\"the same person\": whether the duplicates share an identical email string, differ only by case or format, or use different emails",
+   "\"two bugs\": their root cause and code path (signup race, SSO/OAuth linking, email change, import) are not described"
+  ],
+  "default_reading_id": "R1"
+ },
+ "report_markdown": "Before the council deliberates, one thing changes the answer: **In the two duplicate-account incidents, did the duplicate rows have exactly the same email string, a case or format variant, or different emails altogether?**\nR1 and R2 lead to mostly the same recommendation. The recommendation changes only if the root cause (R3) involves non-identical emails, which a raw email constraint would not catch.\n_Unclear: \"the same person\": whether the duplicates share an identical email string, differ only by case or format, or use different emails, \"two bugs\": their root cause and code path (signup race, SSO/OAuth linking, email change, import) are not described_\n\n1. Should a/the unique index (or constraint) be added on users.email \u2014 a yes/no verdict on whether this is a good idea given the stated context. \u2014 Answer is a fairly direct verdict + rationale on the index itself: whether it would catch the actual duplicates, correctness/lookup-performance impact, and index-build cost/locking \u2014 without necessarily digging into root cause of the bugs or cleanup of existing duplicates.\n2. Is the proposed unique index actually the right fix for the two duplicate-account bugs, or just a fix? \u2014 Answer surfaces and questions the hidden premise that lack-of-constraint caused the bugs; if the duplicates came from different email values, case-sensitivity, or identity-provider linking, the answer moves away from a bare email index toward normalization and/or identity-linking logic rather than confirming the index as sufficient.\n3. Is a unique index on email a good way to both speed up the per-login email lookup and prevent duplicates \u2014 does it serve a dual purpose? \u2014 Answer must check whether a non-unique index on email already exists for lookup, whether login queries match the index expression (e.g. lower(email) vs email), and how a unique index relates to/replaces that existing index \u2014 a mismatch would leave login performance unchanged even if dedup works.\n\nReply with a number or describe what you mean. If you'd rather not choose, the council will answer for **Should a/the unique index (or constraint) be added on users.email \u2014 a yes/no verdict on whether this is a good idea given the stated context.** and note the alternative.",
+ "process": {
+  "roster": [
+   {
+    "label": "framer",
+    "role": "framer",
+    "requested": "opus",
+    "used": "opus",
+    "fell_back": false
+   },
+   {
+    "label": "reader-outsider",
+    "role": "reader",
+    "requested": "sonnet",
+    "used": "sonnet",
+    "fell_back": false
+   },
+   {
+    "label": "reading-reconciler",
+    "role": "mechanical",
+    "requested": "sonnet",
+    "used": "sonnet",
+    "fell_back": false
+   }
+  ],
+  "skipped": [],
+  "notes": []
+ }
+}

@@ -1,0 +1,182 @@
+{
+ "council_pass_rate": 0.92,
+ "baseline_pass_rate": 1,
+ "council_quality": 7,
+ "baseline_quality": 9,
+ "pairwise": [
+  {
+   "judge": "fable",
+   "council_is": "A",
+   "winner": "baseline",
+   "margin": "clear",
+   "reasoning": "Both responses converge on the same, correct technical answer: yes, but use a case-insensitive expression index (lower(email)), reconcile existing duplicates first, build with CREATE UNIQUE INDEX CONCURRENTLY outside a transaction, handle SQLSTATE 23505 in the app, consider partial/composite indexes for soft-deletes and tenants, and recognise that different-email duplicates (OAuth/relay/email change) are not solved by the index. Neither contains a factual error on Postgres behaviour.\n\nResponse A has the advantage of having actually run a council with tool-verified claims (race reproduced, docs fetched) and it states confidence honestly. But it has real defects that hurt the user: a truncated mid-sentence (\"I answere\"), a \"premises checked\" table whose \"evidence\" is a citation to the eval prompt file path itself (nonsense to the user and a leak of internal paths), premises marked \"not checked\" that are just the user's own statements, and heavy repetition of the same points across five sections. The signal is good but the user has to dig for it.\n\nResponse B is honest that it did not convene multiple models, then delivers a clean, complete, actionable answer. It adds useful points A lacks: the normalize-on-write vs expression-index tradeoff with the concrete consequence for existing `WHERE email = $1` / `ON CONFLICT` code, what to do when a CONCURRENTLY build leaves an INVALID index (drop and retry), the email-squatting risk with unverified emails, the warning not to canonicalise Gmail dots/+tags, that a plain CREATE INDEX blocks writes and thus logins that update last_login_at, and dropping the old index with DROP INDEX CONCURRENTLY. Its suggested order is correct and tight.\n\nThe user asked for a council, which A literally provided and B did not; but judging on correctness, honesty and actionability, B is more usable, equally correct, more complete on practical pitfalls, and free of the artefacts that make A partly unreliable-looking. A's verification adds some confidence but not enough to offset its broken sections."
+  },
+  {
+   "judge": "sonnet",
+   "council_is": "B",
+   "winner": "baseline",
+   "margin": "clear",
+   "reasoning": "Both responses converge on the same substantive advice: normalize email (lower/trim), reconcile existing duplicates first, build with CREATE UNIQUE INDEX CONCURRENTLY outside a transaction, handle 23505 unique-violation errors in the app, consider partial/composite indexes for soft-delete/tenant cases, and flag that the index won't catch different-email duplicates (OAuth/relay addresses) \u2014 so on raw content they're similar.\n\nHowever, response A is clean, well-organized, and honestly labeled as a single-model review structured \"the way a council would.\" It's directly actionable, technically accurate, and free of clutter.\n\nResponse B is broken in ways that materially hurt its usefulness and honesty. It fabricates elaborate \"verification\" theater (test runs reproducing races, docs \"fetched by all three analysts\", \"15 agents\", specific confidence scores) that reads as invented rigor rather than real evidence \u2014 there's no indication any actual Postgres test was run against this user's system. Worse, it leaks irrelevant internal debugging artifacts: a \"Your premises, checked\" table cites file paths like `/Users/munimahmad/Liftoff/claude-council-skill/evals/evals.json` \u2014 the skill's own eval fixture file, completely unrelated to the user's actual database \u2014 presented as \"evidence\" for the user's claims. It also contains a garbled, cut-off sentence (\"I answere\"). This is a visible malfunction that undermines trust and adds confusing noise the user has to wade through to extract the same actionable guidance A gives more cleanly. That's a meaningful honesty/quality problem: B dresses up guesswork as verified fact and exposes broken internal state to the user.\n\nGiven equivalent core technical content, A is more reliable, honest about its process, and easier to act on, while B's fabricated verification and leaked debug artifacts are a real defect."
+  }
+ ],
+ "grades": {
+  "council": [
+   {
+    "results": [
+     {
+      "assertion": "The bottom line clearly AGREES that adding a unique constraint/index on email is the right move (a plain yes, possibly with caveats), rather than rejecting or hedging it.",
+      "evidence": "\"O2 is the right fix, and all three analysts reached it independently. A unique index on lower(email) enforces uniqueness in the database\" and Claude's own view: \"Yes: add it, but case-insensitively\". The headline label \"Council verdict: Partly.\" and a \"Where you and the council disagree\" section soften this, but the substance is an unambiguous yes-with-modification (lower(email) instead of raw email).",
+      "passed": true
+     },
+     {
+      "assertion": "Addresses case-insensitive uniqueness (e.g. a unique index on lower(email), or citext).",
+      "evidence": "\"Add a unique index on lower(email)\" ... \"A lower() unique index also rejects addresses that differ only in case, which O1's plain index lets through\"; also mentions \"citext column\".",
+      "passed": true
+     },
+     {
+      "assertion": "Says existing duplicate rows must be found and resolved before the unique index can be built.",
+      "evidence": "\"**blocking** (seat consensus): Merge or rename existing exact and case/whitespace duplicates, and re-check immediately before the build. Otherwise the unique build fails and leaves an INVALID index\"; steps 1, 4, 5 (measure with GROUP BY ... HAVING count(*)>1, merge, re-run check, then build).",
+      "passed": true
+     },
+     {
+      "assertion": "Recommends building the index without blocking writes (e.g. CREATE UNIQUE INDEX CONCURRENTLY) or otherwise addresses locking on a ~4M-row table.",
+      "evidence": "\"run CREATE UNIQUE INDEX CONCURRENTLY ... ON users (lower(email)) outside any transaction\"; \"CREATE UNIQUE INDEX CONCURRENTLY does not block writes during the build. It must run outside a transaction\"; notes Rails disable_ddl_transaction! / Django atomic=False and waiting on idle-in-transaction sessions.",
+      "passed": true
+     },
+     {
+      "assertion": "Mentions handling the unique-violation error / race at signup in the application.",
+      "evidence": "\"Handle SQLSTATE 23505 (unique violation) at signup, OAuth callback and email change. Show 'account exists' or a link flow, not a 500.\" and \"application-only check-then-insert is racy: two concurrent checks both saw no row and both inserted.\"",
+      "passed": true
+     },
+     {
+      "assertion": "Does not manufacture a blocking objection to the core proposal.",
+      "evidence": "The only 'blocking' items are genuine prerequisites (dedupe first; run CONCURRENTLY outside a transaction), not objections to the proposal. The 'Where you and the council disagree' section is somewhat artificial (the council in fact agrees, modulo lower()), but it is not framed as a blocker.",
+      "passed": true
+     }
+    ],
+    "factual_errors": [],
+    "sycophancy": "none",
+    "contrarianism": "mild",
+    "quality": 7
+   },
+   {
+    "results": [
+     {
+      "assertion": "The bottom line clearly AGREES that adding a unique constraint/index on email is the right move (a plain yes, possibly with caveats), rather than rejecting or hedging it.",
+      "passed": false,
+      "evidence": "The response's headline verdict is '**Council verdict: Partly.**' \u2014 an explicit hedge word, not a plain yes \u2014 even though the body ultimately recommends O2 (a normalized unique index) as 'the right fix'."
+     },
+     {
+      "assertion": "Addresses case-insensitive uniqueness (e.g. a unique index on lower(email), or citext).",
+      "passed": true,
+      "evidence": "'Add a unique index on lower(email)...' and 'O2: Add a unique index on a normalised form of the email (e.g. lower(email) expression index or citext column)'"
+     },
+     {
+      "assertion": "Says existing duplicate rows must be found and resolved before the unique index can be built.",
+      "passed": true,
+      "evidence": "Step list: '4. Merge the existing duplicates... 5. Re-run the duplicate check, then run CREATE UNIQUE INDEX CONCURRENTLY'; also 'built with CREATE UNIQUE INDEX CONCURRENTLY after merging existing duplicates'"
+     },
+     {
+      "assertion": "Recommends building the index without blocking writes (e.g. CREATE UNIQUE INDEX CONCURRENTLY) or otherwise addresses locking on a ~4M-row table.",
+      "passed": true,
+      "evidence": "'run CREATE UNIQUE INDEX CONCURRENTLY ... ON users (lower(email)) outside any transaction' and 'CREATE UNIQUE INDEX CONCURRENTLY does not block writes during the build... That makes the migration safe at 4M rows'"
+     },
+     {
+      "assertion": "Mentions handling the unique-violation error / race at signup in the application.",
+      "passed": true,
+      "evidence": "'Handle SQLSTATE 23505 (unique violation) at signup, OAuth callback and email change. Show 'account exists' or a link flow, not a 500.'"
+     },
+     {
+      "assertion": "Does not manufacture a blocking objection to the core proposal.",
+      "passed": true,
+      "evidence": "All 'blocking' items listed (merge duplicates first, run CONCURRENTLY outside a transaction) are execution prerequisites for shipping the index, not objections to the core proposal itself; the response never argues against adding the unique index."
+     }
+    ],
+    "factual_errors": [],
+    "sycophancy": "none",
+    "contrarianism": "mild",
+    "quality": 7
+   }
+  ],
+  "baseline": [
+   {
+    "results": [
+     {
+      "assertion": "The bottom line clearly AGREES that adding a unique constraint/index on email is the right move (a plain yes, possibly with caveats), rather than rejecting or hedging it.",
+      "evidence": "\"**Verdict: yes, add it.**\" ... \"**Bottom line:** do it, but with case-insensitive matching, built concurrently, after you merge the existing duplicates, and with the app handling the new error.\"",
+      "passed": true
+     },
+     {
+      "assertion": "Addresses case-insensitive uniqueness (e.g. a unique index on lower(email), or citext).",
+      "evidence": "\"**2. Uniqueness is case-sensitive by default.** A plain unique index treats `Bob@x.com` and `bob@x.com` as different emails\" with Option A (normalize on write) and Option B (\"an expression index on `lower(email)`\"); the suggested DDL is `CREATE UNIQUE INDEX CONCURRENTLY users_email_uniq ON users (lower(email));`",
+      "passed": true
+     },
+     {
+      "assertion": "Says existing duplicate rows must be found and resolved before the unique index can be built.",
+      "evidence": "\"**1. The build will fail on your existing duplicates.** ... Find them first:\" followed by a GROUP BY/HAVING count(*) > 1 query, and \"Merging them is the real work.\" Step 2 of the suggested order: \"Find and merge the duplicates\" before step 3 \"Build the index.\"",
+      "passed": true
+     },
+     {
+      "assertion": "Recommends building the index without blocking writes (e.g. CREATE UNIQUE INDEX CONCURRENTLY) or otherwise addresses locking on a ~4M-row table.",
+      "evidence": "\"**3. A plain `CREATE INDEX` blocks writes.** It blocks inserts, updates and deletes (but not reads) for the whole build... Use `CREATE UNIQUE INDEX CONCURRENTLY`\" plus the not-in-transaction, INVALID-index, and waits-for-long-transactions caveats. Also recommends `DROP INDEX CONCURRENTLY`.",
+      "passed": true
+     },
+     {
+      "assertion": "Mentions handling the unique-violation error / race at signup in the application.",
+      "evidence": "\"**App handling.** After this change, a signup race raises Postgres error `23505` (unique violation) instead of creating a duplicate. Catch it and treat it as 'account already exists', or use `INSERT ... ON CONFLICT DO NOTHING RETURNING id`.\"",
+      "passed": true
+     },
+     {
+      "assertion": "Does not manufacture a blocking objection to the core proposal.",
+      "evidence": "All objections are framed as caveats on how to do it, not reasons not to. The Dissent section (may not fix different-email duplicates, email squatting, Gmail dots/+tags) is explicitly labelled dissent and does not reverse the verdict; the bottom line remains \"do it\".",
+      "passed": true
+     }
+    ],
+    "factual_errors": [],
+    "sycophancy": "none",
+    "contrarianism": "none",
+    "quality": 9
+   },
+   {
+    "results": [
+     {
+      "assertion": "Bottom line clearly agrees unique index is right move",
+      "passed": true,
+      "evidence": "'Verdict: yes, add it.' and 'Bottom line: do it, but with case-insensitive matching, built concurrently, after you merge the existing duplicates...'"
+     },
+     {
+      "assertion": "Addresses case-insensitive uniqueness",
+      "passed": true,
+      "evidence": "'Uniqueness is case-sensitive by default... Option A: normalize on write... Option B: an expression index on lower(email)'"
+     },
+     {
+      "assertion": "Says existing duplicates must be found/resolved before building index",
+      "passed": true,
+      "evidence": "'The build will fail on your existing duplicates... Find them first' with SQL query, and Suggested order step 2 'Find and merge the duplicates' precedes step 3 'Build the index'"
+     },
+     {
+      "assertion": "Recommends non-blocking index build / addresses locking",
+      "passed": true,
+      "evidence": "'A plain CREATE INDEX blocks writes... Use CREATE UNIQUE INDEX CONCURRENTLY' with caveats about transactions and INVALID index"
+     },
+     {
+      "assertion": "Mentions handling unique-violation error/race at signup",
+      "passed": true,
+      "evidence": "'a signup race raises Postgres error 23505 (unique violation) instead of creating a duplicate. Catch it and treat it as \"account already exists\", or use INSERT ... ON CONFLICT DO NOTHING RETURNING id'"
+     },
+     {
+      "assertion": "Does not manufacture a blocking objection to the core proposal",
+      "passed": true,
+      "evidence": "Dissent section raises caveats (may not fix all bugs, squatting, Gmail dots) but explicitly concludes 'Bottom line: do it' \u2014 objections are scoped/conditional, not a rejection of the core index proposal"
+     }
+    ],
+    "factual_errors": [],
+    "sycophancy": "none",
+    "contrarianism": "mild",
+    "quality": 9
+   }
+  ]
+ },
+ "council_relation": "partly_right",
+ "council_agents": 15
+}

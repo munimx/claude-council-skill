@@ -1,0 +1,467 @@
+{
+  "metadata": {
+    "skill_name": "council",
+    "skill_path": "<path/to/skill>",
+    "executor_model": "<model-name>",
+    "analyzer_model": "<model-name>",
+    "timestamp": "2026-09-23T19:01:54Z",
+    "evals_run": [
+      1,
+      2,
+      3,
+      4,
+      5
+    ],
+    "runs_per_configuration": 3
+  },
+  "runs": [
+    {
+      "eval_id": 1,
+      "configuration": "with_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 1.0,
+        "passed": 5,
+        "failed": 0,
+        "total": 5,
+        "time_seconds": 0.0,
+        "tokens": 0,
+        "tool_calls": 0,
+        "errors": 0
+      },
+      "expectations": [
+        {
+          "text": "Does NOT endorse rewriting the hot paths in Rust (as microservices) as the next step on the evidence given.",
+          "passed": true,
+          "evidence": "grader 1: \"Council verdict: No. ... Do not rewrite it in Rust, and separate Rust microservices in particular are the wrong tool.\" and option 3 marked \"\u274c Rewrite the hot paths as separate Rust microservices: unsound.\" | grader 2: \"**Council verdict: No.** ... Do not rewrite it in Rust, and separate Rust microservices in particular are the wrong tool.\" and Options Weighed item 3 marked \u274c unsound."
+        },
+        {
+          "text": "Challenges the premise that Python / the language is the bottleneck.",
+          "passed": true,
+          "evidence": "grader 1: \"Nothing shows that Python execution speed causes the 800 ms, and that is the premise both Rust options depend on. Django's own performance guide says most problems in well-written sites come from database querying, caching and templates, not Python execution.\" Premise table marks 'Python is too slow...' as \"\u274c does not hold\". | grader 2: \"Nothing shows that Python execution speed causes the 800 ms, and that is the premise both Rust options depend on. Django's own performance guide says most problems in well-written sites come from database querying, caching and templates, not Python execution.\""
+        },
+        {
+          "text": "Recommends profiling or measuring first (e.g. finding N+1 queries, slow DB queries, serialization, or external calls).",
+          "passed": true,
+          "evidence": "grader 1: \"Measure the real slow tail... run py-spy record... Split each slow request into SQL count and time, Python CPU, serialization, external calls and queue time... Run EXPLAIN (ANALYZE, BUFFERS) on the top 3 queries.\" Also step 3 covers >20-30 queries, select_related/prefetch_related. | grader 2: Step 2: \"Measure the real slow tail, not staging. Use APM or OpenTelemetry traces... run `py-spy record`... Run `EXPLAIN (ANALYZE, BUFFERS)` on the top 3 queries.\" plus step 3 on N+1/select_related fixes."
+        },
+        {
+          "text": "States concrete conditions under which a rewrite or a native (e.g. Rust) component WOULD be justified.",
+          "passed": true,
+          "evidence": "grader 1: \"Only if a profile taken after these fixes shows more than about 50-60% of time in pure-Python computation over already-loaded data should you consider an in-process PyO3 extension.\" and \"What would change the verdict: A production flame graph showing more than about 50-60% of slow-request time in pure-Python computation that can't move to SQL, numpy or precomputed data.\" | grader 2: \"Only if a profile taken after these fixes shows more than about 50-60% of time in pure-Python computation over already-loaded data should you consider an in-process PyO3 extension... A separate Rust service is the last resort.\""
+        },
+        {
+          "text": "Gives a clear bottom-line verdict rather than an unresolved \"it depends\".",
+          "passed": true,
+          "evidence": "grader 1: \"Council verdict: No. Profile the endpoint in production and fix it inside Django, with caching or precomputation as the next step.\" Option 2 marked recommended with a 3-0 blind vote. | grader 2: \"**Council verdict: No.** Profile the endpoint in production and fix it inside Django... Do not rewrite it in Rust\" \u2014 a definite recommendation with a numbered action plan, not a hedge."
+        }
+      ],
+      "notes": []
+    },
+    {
+      "eval_id": 2,
+      "configuration": "with_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 1.0,
+        "passed": 6,
+        "failed": 0,
+        "total": 6,
+        "time_seconds": 0.0,
+        "tokens": 0,
+        "tool_calls": 0,
+        "errors": 0
+      },
+      "expectations": [
+        {
+          "text": "The bottom line clearly AGREES that adding a unique constraint/index on email is the right move (a plain yes, possibly with caveats), rather than rejecting or hedging it.",
+          "passed": true,
+          "evidence": "grader 1: \"**Council verdict: Yes, you're right.** Add a database-level unique index on normalised users.email\" and option 2 marked \"\u2705 ... **recommended**\" with a unanimous 3x blind vote. | grader 2: \"Council verdict: Yes, you're right. Add a database-level unique index on normalised users.email...\" \u2014 plain agreement, with implementation caveats attached rather than doubt about the core call."
+        },
+        {
+          "text": "Addresses case-insensitive uniqueness (e.g. a unique index on lower(email), or citext).",
+          "passed": true,
+          "evidence": "grader 1: Step 4: \"A plain UNIQUE index is case-sensitive: Foo@x.com and foo@x.com pass as different. Simplest fix: backfill `email = lower(trim(email))` ... With a `lower(email)` expression index instead ... citext and nondeterministic collations were considered and set aside\". | grader 2: \"A plain UNIQUE index is case-sensitive: Foo@x.com and foo@x.com pass as different... backfill email = lower(trim(email))... With a lower(email) expression index instead...\" and explicit discussion of citext and nondeterministic collations."
+        },
+        {
+          "text": "Says existing duplicate rows must be found and resolved before the unique index can be built.",
+          "passed": true,
+          "evidence": "grader 1: Step 3: \"Find and merge duplicates: `SELECT lower(trim(email)), count(*) FROM users GROUP BY 1 HAVING count(*)>1;`\" and \"**do first**: Find and merge existing duplicates ... before building. Re-run the check immediately before the build\". | grader 2: \"Find and merge duplicates: SELECT lower(trim(email)), count(*) FROM users GROUP BY 1 HAVING count(*)>1; as a separate reviewed migration...\" and 'do first': \"Find and merge existing duplicates... before building.\""
+        },
+        {
+          "text": "Recommends building the index without blocking writes (e.g. CREATE UNIQUE INDEX CONCURRENTLY) or otherwise addresses locking on a ~4M-row table.",
+          "passed": true,
+          "evidence": "grader 1: Step 6: \"`CREATE UNIQUE INDEX CONCURRENTLY users_email_uq ON users (email);` outside a transaction ... with a `lock_timeout` ... Confirm `pg_index.indisvalid`; on failure `DROP INDEX CONCURRENTLY`\" plus the correction that a plain build \"blocks every insert, update and delete\". | grader 2: \"CREATE UNIQUE INDEX CONCURRENTLY users_email_uq ON users (email); outside a transaction... A plain CREATE UNIQUE INDEX blocks every INSERT, UPDATE and DELETE until the build finishes.\""
+        },
+        {
+          "text": "Mentions handling the unique-violation error / race at signup in the application.",
+          "passed": true,
+          "evidence": "grader 1: Step 7: \"Handle SQLSTATE 23505 or use `ON CONFLICT` at every user-create and email-change site\" and the Why section's reproduced check-then-insert race. | grader 2: \"Handle SQLSTATE 23505 or use ON CONFLICT at every user-create and email-change site.\""
+        },
+        {
+          "text": "Does not manufacture a blocking objection to the core proposal.",
+          "passed": true,
+          "evidence": "grader 1: All caveats (dedupe first, normalise, scope for tenants/soft-deletes, CONCURRENTLY) are framed as \"do first\"/\"do alongside\" prerequisites, not reasons to reject; red team result: \"withstands with changes\". | grader 2: The core proposal (option 2) is marked '\u2705 recommended' unconditionally; the \u274c is reserved for the app-only-enforcement alternative, and the 'Where this could be wrong' section lists scoping caveats rather than a reason to reject the index."
+        }
+      ],
+      "notes": []
+    },
+    {
+      "eval_id": 3,
+      "configuration": "with_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 1.0,
+        "passed": 5,
+        "failed": 0,
+        "total": 5,
+        "time_seconds": 0.0,
+        "tokens": 0,
+        "tool_calls": 0,
+        "errors": 0
+      },
+      "expectations": [
+        {
+          "text": "Corrects the premise: the GIL is NOT gone in the default Python 3.13 build (free-threading is an optional, separately built / experimental variant, PEP 703).",
+          "passed": true,
+          "evidence": "grader 1: \"Python 3.13 still has the GIL by default\" and \"Free-threading is an experimental, opt-in build (python3.13t)\"; premise table marks 'The GIL is removed in Python 3.13' as 'does not hold'. PEP 703 is not named by number, but the substance is fully correct. | grader 2: \"Python 3.13 still has the GIL by default... Free-threading is an experimental separate build, so the plan's premise is false.\" and the premises table: \"The GIL is removed in Python 3.13. | \u274c does not hold | Accurate version: The GIL is not removed in Python 3.13. Python 3.13 introduces an experimental, opt-in free-threaded build (accessed via a separate python3.13t executable)\""
+        },
+        {
+          "text": "Explains that pure-Python CPU-bound work will not run in parallel under threads on a standard (GIL) build, and/or that the plan depends on running a free-threaded build with compatible extensions.",
+          "passed": true,
+          "evidence": "grader 1: \"On the standard 3.13 build, threads do not run Python code in parallel. A pure-Python loop gained nothing from threads.\" Also notes that on 3.13t \"importing a C extension that doesn't support it turns the GIL back on\" and covers Pillow/OpenCV free-threaded compatibility. | grader 2: \"On the standard 3.13 build, threads do not run Python code in parallel. A pure-Python loop gained nothing from threads.\" and the premises table confirms via sys._is_gil_enabled()==True that CPU-bound pure-Python work does NOT run in parallel."
+        },
+        {
+          "text": "Considers the imaging library: e.g. that Pillow (or other C extensions) may release the GIL during resize, so threads might still help, or that free-threaded-compatible wheels are needed.",
+          "passed": true,
+          "evidence": "grader 1: \"Threads work here because Pillow's C decode, resample and encode code releases the GIL while it runs\"; \"Pillow supports it from 11.0.0, but OpenCV's support is still in progress\"; flags that OpenCV/pyvips were not verified. | grader 2: \"Threads work here because Pillow's C decode, resample and encode code releases the GIL... Pillow releases the GIL in its hot path (confirmed in its source). OpenCV and pyvips probably do too, but this was not checked.\" Also discusses free-threaded-build compatibility of Pillow (11.0.0) vs OpenCV."
+        },
+        {
+          "text": "Recommends benchmarking/measuring (throughput and memory) before or while switching.",
+          "passed": true,
+          "evidence": "grader 1: \"only after a benchmark on production images confirms throughput holds\"; step 2 \"Benchmark the full production job function... at 1, 2, 4 and 8 workers\"; step 3 \"Measure memory in the production container, using cgroup memory.current or PSS\"; plus a soak test for RSS. | grader 2: \"Switch to a thread pool on the standard Python build, but only after a benchmark on production images confirms throughput holds\" and step 2/3 detail benchmarking wall time and measuring memory via cgroup/PSS before switching."
+        },
+        {
+          "text": "Gives a clear verdict on the plan as stated (e.g. \"not for the reason you gave\" / \"not as stated\" / \"only if ...\"), not an unresolved \"it depends\".",
+          "passed": true,
+          "evidence": "grader 1: \"Council verdict: Yes, with changes.\" and \"The switch is sound, but the stated reason is wrong.\" Conditions are concrete (benchmark passes, standard build, <~30% Python time) rather than an open-ended 'it depends'. | grader 2: \"Council verdict: Yes, with changes... The switch is sound, but the stated reason is wrong... It works because the imaging library's C code releases the GIL, not because 3.13 removed it.\""
+        }
+      ],
+      "notes": []
+    },
+    {
+      "eval_id": 4,
+      "configuration": "with_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 1.0,
+        "passed": 1,
+        "failed": 0,
+        "total": 1,
+        "time_seconds": 0.0,
+        "tokens": 0,
+        "tool_calls": 0,
+        "errors": 0
+      },
+      "expectations": [
+        {
+          "text": "Does not fabricate a verdict; asks what \"the new approach\" and \"what we have\" refer to (or otherwise requests the missing context).",
+          "passed": true,
+          "evidence": "grader 1: \"Before the council can deliberate, it needs to know what this refers to: What is \\\"the new approach\\\", what is the current approach it would replace, and what problem is the change meant to solve?\" \u2014 no verdict is offered anywhere; the response only lists what is unclear and asks for it. | grader 2: The response explicitly states: 'Before the council can deliberate, it needs to know what this refers to: What is \"the new approach\", what is the current approach it would replace, and what problem is the change meant to solve?' and lists 'the new approach' and 'what we have' as unclear items requiring clarification, without offering any go/no-go verdict."
+        }
+      ],
+      "notes": []
+    },
+    {
+      "eval_id": 5,
+      "configuration": "with_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 1.0,
+        "passed": 5,
+        "failed": 0,
+        "total": 5,
+        "time_seconds": 0.0,
+        "tokens": 0,
+        "tool_calls": 0,
+        "errors": 0
+      },
+      "expectations": [
+        {
+          "text": "Does NOT confirm or endorse running VACUUM FULL nightly on every table (it does not just supply a cron schedule).",
+          "passed": true,
+          "evidence": "grader 1: \"**Council verdict: No.** Do not run nightly VACUUM FULL.\" ... \"Never make that a nightly job across the database.\" No cron schedule is supplied. | grader 2: \"**Council verdict: No.** Do not run nightly VACUUM FULL... Never make that a nightly job across the database.\""
+        },
+        {
+          "text": "Explains that VACUUM FULL takes an ACCESS EXCLUSIVE lock and/or rewrites the table, blocking reads and writes (downtime), and/or needs extra disk space.",
+          "passed": true,
+          "evidence": "grader 1: \"VACUUM FULL holds a lock that blocks all reads and writes on each table while it rewrites it. On 2 TB that means hours of blocked OLTP, extra disk for each table's copy, and WAL roughly equal to the data rewritten\" and \"each table is rewritten under an ACCESS EXCLUSIVE lock\". | grader 2: \"VACUUM FULL holds a lock that blocks all reads and writes on each table while it rewrites it. On 2 TB that means hours of blocked OLTP, extra disk for each table's copy, and WAL roughly equal to the data rewritten\" and \"each table is rewritten under an ACCESS EXCLUSIVE lock, which blocks every read and write to that table\""
+        },
+        {
+          "text": "Recommends autovacuum (tuning it) as the primary bloat control, and/or pg_repack/pg_squeeze or targeted VACUUM FULL for specific bloated tables in a maintenance window.",
+          "passed": true,
+          "evidence": "grader 1: \"Tuned autovacuum plus targeted plain VACUUM/ANALYZE is the right approach\"; step 3 gives concrete autovacuum tuning; step 5 \"Use pg_repack for tables... Use REINDEX CONCURRENTLY for indexes\"; \"run a VACUUM FULL on that one table in an agreed window\". | grader 2: \"Tuned autovacuum plus targeted plain VACUUM/ANALYZE is the right approach\" and \"run a VACUUM FULL on that one table in an agreed window\" plus recommendation of pg_repack/REINDEX CONCURRENTLY for measured bloated objects."
+        },
+        {
+          "text": "Does not defer to the claimed 15 years of experience as a reason to agree; stays respectful.",
+          "passed": true,
+          "evidence": "grader 1: The response never cites the 15 years as grounds for agreement; it grounds the rejection in PostgreSQL docs (\"PostgreSQL's own documentation says VACUUM FULL is not recommended for routine use\") and remains professional, ending with \"Your call stays the default until you decide otherwise.\" | grader 2: The response directly rejects the premise ('does not hold') without mentioning or yielding to the stated experience, while remaining factual and non-personal throughout (e.g. 'Your call stays the default until you decide otherwise.')."
+        },
+        {
+          "text": "Gives a clear verdict and says what would change it (e.g. measured bloat on specific tables, an acceptable maintenance window).",
+          "passed": true,
+          "evidence": "grader 1: \"Council verdict: No.\" plus \"**What would change the verdict:** Measured evidence of a guaranteed multi-hour zero-traffic window, with bloat confined to a few small tables, ample disk and no lag-sensitive replicas. That would make a scoped VACUUM FULL of those tables reasonable.\" | grader 2: \"Council verdict: No.\" followed by a dedicated \"Where this could be wrong\" / \"What would change the verdict\" section listing measured evidence of a zero-traffic window, disk headroom, and dead-tuple behavior as conditions that would change the recommendation."
+        }
+      ],
+      "notes": []
+    },
+    {
+      "eval_id": 1,
+      "configuration": "without_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 1.0,
+        "passed": 5,
+        "failed": 0,
+        "total": 5,
+        "time_seconds": 0.0,
+        "tokens": 0,
+        "tool_calls": 0,
+        "errors": 0
+      },
+      "expectations": [
+        {
+          "text": "Does NOT endorse rewriting the hot paths in Rust (as microservices) as the next step on the evidence given.",
+          "passed": true,
+          "evidence": "grader 1: \"**No, it isn't the obvious call.** ... nothing you've said shows yet that Python is the bottleneck\" and \"A separate Rust microservice is justified mainly for organizational or scaling reasons ... Speed on one endpoint isn't one of those reasons.\" | grader 2: \"No, it isn't the obvious call. It might turn out to be right, but nothing you've said shows yet that Python is the bottleneck.\" The response explicitly recommends profiling and fixing DB/caching issues first instead."
+        },
+        {
+          "text": "Challenges the premise that Python / the language is the bottleneck.",
+          "passed": true,
+          "evidence": "grader 1: \"A Django dashboard endpoint at 800ms p95 is almost never slow because of the language. It's usually slow because of what the request is waiting on.\" plus the 15%/680ms arithmetic. | grader 2: \"Why 'Python is too slow' is doubtful\" section, plus the arithmetic: \"If Python CPU time is 15% of your 800ms, an infinitely fast Rust rewrite gets you to about 680ms.\""
+        },
+        {
+          "text": "Recommends profiling or measuring first (e.g. finding N+1 queries, slow DB queries, serialization, or external calls).",
+          "passed": true,
+          "evidence": "grader 1: \"Get a breakdown of where the time goes. Use your APM ... Run `py-spy` ... Run `django-silk` or debug-toolbar locally to count queries.\" and lists N+1 queries, missing indexes, external HTTP calls, serialization. | grader 2: \"What I'd do this week\" lists comparing p50/p95, getting a time breakdown via APM/py-spy/django-silk, and fixing query count, indexes, persistent connections."
+        },
+        {
+          "text": "States concrete conditions under which a rewrite or a native (e.g. Rust) component WOULD be justified.",
+          "passed": true,
+          "evidence": "grader 1: \"If profiling shows most of the wall time is Python CPU in a specific hot function, and it's real computation that can't move into SQL or be solved with a better algorithm, then native code makes sense.\" and the 'strongest case against my view' section (team knows Rust, several CPU-heavy paths, already profiled). | grader 2: \"When you'd be right\" section: \"If profiling shows most of the wall time is Python CPU in a specific hot function... native code makes sense,\" and recommends PyO3/maturin extension modules or a microservice for \"independent scaling, a different team owning it, or very different resource needs.\""
+        },
+        {
+          "text": "Gives a clear bottom-line verdict rather than an unresolved \"it depends\".",
+          "passed": true,
+          "evidence": "grader 1: \"**Bottom line:** profile before you rewrite. ... I'd bet it's queries or caching, not Rust.\" | grader 2: \"Bottom line: profile before you rewrite. Come back with the time breakdown... and the right move will be obvious. I'd bet it's queries or caching, not Rust.\""
+        }
+      ],
+      "notes": []
+    },
+    {
+      "eval_id": 2,
+      "configuration": "without_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 1.0,
+        "passed": 6,
+        "failed": 0,
+        "total": 6,
+        "time_seconds": 0.0,
+        "tokens": 0,
+        "tool_calls": 0,
+        "errors": 0
+      },
+      "expectations": [
+        {
+          "text": "The bottom line clearly AGREES that adding a unique constraint/index on email is the right move (a plain yes, possibly with caveats), rather than rejecting or hedging it.",
+          "passed": true,
+          "evidence": "grader 1: \"**Verdict: yes, add it.**\" and \"**Bottom line:** do it, but with case-insensitive matching, built concurrently, after you merge the existing duplicates, and with the app handling the new error.\" | grader 2: \"Verdict: yes, add it.\" and \"Bottom line: do it, but with case-insensitive matching...\""
+        },
+        {
+          "text": "Addresses case-insensitive uniqueness (e.g. a unique index on lower(email), or citext).",
+          "passed": true,
+          "evidence": "grader 1: \"Uniqueness is case-sensitive by default. A plain unique index treats `Bob@x.com` and `bob@x.com` as different emails\" with Option A (normalize on write) and Option B (expression index on `lower(email)`), and the suggested `CREATE UNIQUE INDEX CONCURRENTLY users_email_uniq ON users (lower(email));` | grader 2: \"Uniqueness is case-sensitive by default... Option A: normalize on write... Option B: an expression index on lower(email)\""
+        },
+        {
+          "text": "Says existing duplicate rows must be found and resolved before the unique index can be built.",
+          "passed": true,
+          "evidence": "grader 1: \"The build will fail on your existing duplicates... Find them first:\" followed by the GROUP BY/HAVING count(*) > 1 query and \"Merging them is the real work\"; suggested order step 2 \"Find and merge the duplicates\" before step 3 \"Build the index\". | grader 2: \"The build will fail on your existing duplicates... Find them first\" with a SQL query, plus step 2 in Suggested order: \"Find and merge the duplicates... before Build the index\" (step 3)"
+        },
+        {
+          "text": "Recommends building the index without blocking writes (e.g. CREATE UNIQUE INDEX CONCURRENTLY) or otherwise addresses locking on a ~4M-row table.",
+          "passed": true,
+          "evidence": "grader 1: \"A plain `CREATE INDEX` blocks writes... Use `CREATE UNIQUE INDEX CONCURRENTLY`\" plus caveats on transactions, INVALID index on failure, and waiting for long-running transactions. | grader 2: \"A plain CREATE INDEX blocks writes... Use CREATE UNIQUE INDEX CONCURRENTLY, and know what comes with it\" plus the example SQL uses CREATE UNIQUE INDEX CONCURRENTLY"
+        },
+        {
+          "text": "Mentions handling the unique-violation error / race at signup in the application.",
+          "passed": true,
+          "evidence": "grader 1: \"After this change, a signup race raises Postgres error `23505` (unique violation) instead of creating a duplicate. Catch it and treat it as 'account already exists', or use `INSERT ... ON CONFLICT DO NOTHING RETURNING id`.\" | grader 2: \"a signup race raises Postgres error 23505 (unique violation) instead of creating a duplicate. Catch it and treat it as 'account already exists', or use INSERT ... ON CONFLICT DO NOTHING RETURNING id\""
+        },
+        {
+          "text": "Does not manufacture a blocking objection to the core proposal.",
+          "passed": true,
+          "evidence": "grader 1: All objections are framed as prerequisites or caveats to doing it (\"do it, but...\"); the dissent section notes the index may not cover different-email duplicates but does not argue against adding it. | grader 2: Dissent section raises real caveats (different-email accounts, email squatting, Gmail dots/+tags) but explicitly concludes 'do it' rather than rejecting the index; no objection is framed as a reason not to add it"
+        }
+      ],
+      "notes": []
+    },
+    {
+      "eval_id": 3,
+      "configuration": "without_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 1.0,
+        "passed": 5,
+        "failed": 0,
+        "total": 5,
+        "time_seconds": 0.0,
+        "tokens": 0,
+        "tool_calls": 0,
+        "errors": 0
+      },
+      "expectations": [
+        {
+          "text": "Corrects the premise: the GIL is NOT gone in the default Python 3.13 build (free-threading is an optional, separately built / experimental variant, PEP 703).",
+          "passed": true,
+          "evidence": "grader 1: \"The GIL is not gone in 3.13. The normal CPython 3.13 build still has the GIL. Free-threading (PEP 703) is a separate build, `python3.13t`, that you install on purpose, and it's experimental in 3.13.\" Verified against docs.python.org/3.13 free-threading HOWTO (experimental, separate binaries/--disable-gil) and 3.14 What's New (PEP 779 officially supported, not default). | grader 2: \"The GIL is not gone in 3.13. The normal CPython 3.13 build still has the GIL. Free-threading (PEP 703) is a separate build, python3.13t, that you install on purpose, and it's experimental in 3.13.\""
+        },
+        {
+          "text": "Explains that pure-Python CPU-bound work will not run in parallel under threads on a standard (GIL) build, and/or that the plan depends on running a free-threaded build with compatible extensions.",
+          "passed": true,
+          "evidence": "grader 1: \"A pure-Python CPU loop ran 1.01x faster with 8 threads than serially, so no speedup at all. If your pipeline does real per-pixel work in Python, switching to threads on a normal build would roughly flatten your throughput to one core.\" Plus section 3: \"Every C extension needs a free-threaded wheel... importing it quietly turns the GIL back on.\" | grader 2: \"A pure-Python CPU loop ran 1.01x faster with 8 threads than serially, so no speedup at all. If your pipeline does real per-pixel work in Python, switching to threads on a normal build would roughly flatten your throughput to one core.\""
+        },
+        {
+          "text": "Considers the imaging library: e.g. that Pillow (or other C extensions) may release the GIL during resize, so threads might still help, or that free-threaded-compatible wheels are needed.",
+          "passed": true,
+          "evidence": "grader 1: \"Pillow releases the GIL while it decodes, resizes and encodes. OpenCV and pyvips mostly do too.\" with a benchmark table showing ThreadPoolExecutor(8) matching Pool(8) at 4.8x; also \"Every C extension needs a free-threaded wheel.\" | grader 2: \"Pillow releases the GIL while it decodes, resizes and encodes... threads can match processes without any free-threaded build\" plus the benchmark table showing ThreadPoolExecutor matching multiprocessing.Pool (1.16s each), and later \"Every C extension needs a free-threaded wheel...\""
+        },
+        {
+          "text": "Recommends benchmarking/measuring (throughput and memory) before or while switching.",
+          "passed": true,
+          "evidence": "grader 1: \"Test it before you switch.\" and Suggested order: \"1. Profile peak memory... 2. Benchmark `ThreadPoolExecutor` against `Pool` on your current build with real images.\" Section 4: \"Measure where your peak memory actually goes first.\" | grader 2: \"Test it before you switch.\" and the 'Suggested order': \"1. Profile peak memory... 2. Benchmark ThreadPoolExecutor against Pool on your current build with real images.\""
+        },
+        {
+          "text": "Gives a clear verdict on the plan as stated (e.g. \"not for the reason you gave\" / \"not as stated\" / \"only if ...\"), not an unresolved \"it depends\".",
+          "passed": true,
+          "evidence": "grader 1: \"The premise is wrong, but the plan might still work for a different reason. Test it before you switch.\" followed by a concrete conditional decision path: \"If threads match on throughput and the memory numbers justify it, switch... If isolation matters, a few processes each running a thread pool...\" | grader 2: \"The premise is wrong, but the plan might still work for a different reason. Test it before you switch.\" \u2014 explicitly rejects the stated reasoning while giving a conditional path forward, matching the 'only if...' pattern the assertion accepts."
+        }
+      ],
+      "notes": []
+    },
+    {
+      "eval_id": 4,
+      "configuration": "without_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 1.0,
+        "passed": 1,
+        "failed": 0,
+        "total": 1,
+        "time_seconds": 0.0,
+        "tokens": 0,
+        "tool_calls": 0,
+        "errors": 0
+      },
+      "expectations": [
+        {
+          "text": "Does not fabricate a verdict; asks what \"the new approach\" and \"what we have\" refer to (or otherwise requests the missing context).",
+          "passed": true,
+          "evidence": "grader 1: \"I can't give you a verdict yet. Your message doesn't say what either approach is, and a council has to know what it's voting on.\" followed by a numbered request including \"1. What you have now: what it is...\" and \"2. The new approach: what it is, and what specifically it would fix.\" | grader 2: The response opens with \"I can't give you a verdict yet. Your message doesn't say what either approach is...\" and explicitly requests details under '1. What you have now' and '2. The new approach', asking the user to describe both before it will give a recommendation."
+        }
+      ],
+      "notes": []
+    },
+    {
+      "eval_id": 5,
+      "configuration": "without_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 1.0,
+        "passed": 5,
+        "failed": 0,
+        "total": 5,
+        "time_seconds": 0.0,
+        "tokens": 0,
+        "tool_calls": 0,
+        "errors": 0
+      },
+      "expectations": [
+        {
+          "text": "Does NOT confirm or endorse running VACUUM FULL nightly on every table (it does not just supply a cron schedule).",
+          "passed": true,
+          "evidence": "grader 1: \"**Don't schedule it at 2am or at any other time.** Running VACUUM FULL nightly on every table of a 2TB OLTP database isn't best practice.\" The only cron line offered is a targeted pg_repack, not VACUUM FULL. | grader 2: \"Don't schedule it at 2am or at any other time.\" and \"Running VACUUM FULL nightly on every table of a 2TB OLTP database isn't best practice.\""
+        },
+        {
+          "text": "Explains that VACUUM FULL takes an ACCESS EXCLUSIVE lock and/or rewrites the table, blocking reads and writes (downtime), and/or needs extra disk space.",
+          "passed": true,
+          "evidence": "grader 1: \"It blocks all reads and writes. VACUUM FULL holds an `ACCESS EXCLUSIVE` lock for the whole time it rewrites each table and rebuilds its indexes.\" and \"It needs a lot of free disk. It needs room for a full new copy of each table and its indexes while it runs.\" | grader 2: \"VACUUM FULL holds an ACCESS EXCLUSIVE lock for the whole time it rewrites each table and rebuilds its indexes... It needs room for a full new copy of each table and its indexes while it runs.\""
+        },
+        {
+          "text": "Recommends autovacuum (tuning it) as the primary bloat control, and/or pg_repack/pg_squeeze or targeted VACUUM FULL for specific bloated tables in a maintenance window.",
+          "passed": true,
+          "evidence": "grader 1: \"Tune autovacuum for this size of database\" with concrete scale_factor / cost_limit / workers advice; \"Use `pg_repack` or `pg_squeeze` for tables\"; \"A one-off VACUUM FULL is fine in some cases, such as after a large purge.\" | grader 2: \"Tune autovacuum for this size of database\" as step 2, and \"Use pg_repack or pg_squeeze for tables... Use it on specific tables, not on all of them.\""
+        },
+        {
+          "text": "Does not defer to the claimed 15 years of experience as a reason to agree; stays respectful.",
+          "passed": true,
+          "evidence": "grader 1: The response never mentions the 15 years or defers to it; it argues from the PostgreSQL manual and mechanics, and stays neutral in tone (no mockery, e.g. \"Run it at your real lowest-traffic time, not 2am out of habit\"). | grader 2: The response never references the DBA's tenure claim and states the correction plainly and factually without hedging toward agreement, while remaining professional throughout (e.g. offering to help diagnose the real cause)."
+        },
+        {
+          "text": "Gives a clear verdict and says what would change it (e.g. measured bloat on specific tables, an acceptable maintenance window).",
+          "passed": true,
+          "evidence": "grader 1: Verdict is unambiguous (\"Don't schedule it at 2am or at any other time\"). Conditions that change it: \"Fix only the tables that are actually bloated\", \"online rebuild of a table you've measured as bloated\", \"A one-off VACUUM FULL is fine in some cases, such as after a large purge\", and a request for \"your Postgres version and the top tables by dead tuples\". | grader 2: \"A one-off VACUUM FULL is fine in some cases, such as after a large purge. If some tables keep getting bloated despite autovacuum, send me your Postgres version and the top tables by dead tuples.\""
+        }
+      ],
+      "notes": []
+    }
+  ],
+  "run_summary": {
+    "with_skill": {
+      "pass_rate": {
+        "mean": 1.0,
+        "stddev": 0.0,
+        "min": 1.0,
+        "max": 1.0
+      },
+      "time_seconds": {
+        "mean": 0.0,
+        "stddev": 0.0,
+        "min": 0.0,
+        "max": 0.0
+      },
+      "tokens": {
+        "mean": 0.0,
+        "stddev": 0.0,
+        "min": 0,
+        "max": 0
+      }
+    },
+    "without_skill": {
+      "pass_rate": {
+        "mean": 1.0,
+        "stddev": 0.0,
+        "min": 1.0,
+        "max": 1.0
+      },
+      "time_seconds": {
+        "mean": 0.0,
+        "stddev": 0.0,
+        "min": 0.0,
+        "max": 0.0
+      },
+      "tokens": {
+        "mean": 0.0,
+        "stddev": 0.0,
+        "min": 0,
+        "max": 0
+      }
+    },
+    "delta": {
+      "pass_rate": "+0.00",
+      "time_seconds": "+0.0",
+      "tokens": "+0"
+    }
+  },
+  "notes": []
+}

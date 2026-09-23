@@ -1,0 +1,1247 @@
+{
+ "status": "ok",
+ "mode": "standard",
+ "relation_to_user": "partly_right",
+ "verdict": {
+  "recommended_option_id": "O3",
+  "alternative": "If a measured memory breakdown shows that per-process baseline dominates RSS, and the resize path releases the GIL (as Pillow's does), benchmark a bounded ThreadPoolExecutor on the current standard build against the Pool as a gated second step. Adopt it only if throughput holds on production images, and add a supervisor/restart policy to replace the process isolation it loses.",
+  "option_assessments": [
+   {
+    "option_id": "O3",
+    "verdict": "sound_with_changes",
+    "note": "The right first move. It keeps the throughput and isolation the asker wants and can be undone. Two changes are needed. First, pick the lever from a measured RSS-vs-buffer breakdown (V4). Second, drop 'fewer workers' below the core count, because that trades throughput for memory. Prefer maxtasksperchild, preload with fork/forkserver where safe, reduced-size decode and a cap on in-flight images."
+   },
+   {
+    "option_id": "O1",
+    "verdict": "partly_sound",
+    "note": "The direction can work on the standard GIL build if the whole decode/resize/encode path is C code that releases the GIL. Three seats measured Pillow scaling with threads. But 'no other changes' is wrong. The imaging library is unspecified, and a Python-level stage makes threads slower than serial (V5). The change also removes crash isolation and maxtasksperchild, and puts no bound on in-flight buffers. The memory saving is only the duplicated interpreters (V4, V5)."
+   },
+   {
+    "option_id": "O2",
+    "verdict": "partly_sound",
+    "note": "This is the correctly gated way to use threads for CPU work that holds the GIL (V1, V3). Its feasibility depends on the library. A seat's fetch of the py-free-threading tracker (B.C4, backed by C.C7) found free-threaded wheels for Pillow 11.0+ and NumPy 2.1+, but no stable free-threaded release of opencv-python. So an OpenCV pipeline cannot meet O2's precondition today. For a GIL-releasing library like Pillow, O2 is unnecessary. Moving production to an optional build with extra per-object memory and single-thread overhead, where one incompatible extension silently turns the GIL back on, is too much risk for a memory fix."
+   },
+   {
+    "option_id": "O4",
+    "verdict": "unsound",
+    "note": "It keeps throughput and reliability but does nothing toward the stated goal of lowering memory."
+   }
+  ],
+  "headline": "Keep process-based workers and shrink their memory first (O3), picking the lever from a measured memory breakdown. Standard Python 3.13 still has the GIL, and a thread pool is at most a later, benchmark-gated trial.",
+  "answer": "Keep the process workers and shrink them first (O3), choosing the lever from a measured memory breakdown. The premise is wrong: standard CPython 3.13 still has the GIL. Free-threading is an opt-in build (python3.13t), and importing a C extension that isn't marked compatible turns the GIL back on (V1, V3). Library support is partial. Pillow 11.0+ and NumPy 2.1+ ship free-threaded wheels, but OpenCV has no stable free-threaded release (tracker check by one seat). So whether a free-threaded build can work depends on the library.\n\nStep 1: in production, run sys.version, sysconfig.get_config_var('Py_GIL_DISABLED') and sys._is_gil_enabled(), and identify the imaging library. Record per-worker RSS/PSS against peak decoded-buffer memory, plus pool size, image sizes and start method. In V4, an interpreter with numpy and PIL loaded used about 30 MB, and one decoded large image took about 34 MB, so image buffers can dominate.\n\nStep 2: apply O3 levers that don't cost throughput:\n- pool size equal to the core count\n- maxtasksperchild\n- fork/forkserver preload where it is safe\n- reduced-size decode (draft/reduce)\n- a cap on in-flight images\n\nDon't cut workers below the core count.\n\nStep 3, only if per-process baseline dominates and the library releases the GIL (Pillow does): benchmark a bounded ThreadPoolExecutor on the current standard build against the Pool, using production images. Adopt it only if throughput holds, and add a supervisor/restart policy and a bounded queue. Any Python-level stage makes threads lose; in V5, threads were slower than serial.\n\nDon't do O1 as stated, don't migrate to a free-threaded build (O2), and don't pick O4.",
+  "alt_reading_answer": null,
+  "why": [
+   "U1's premise fails. The default 3.13 build keeps the GIL, and free-threading is opt-in and can be turned off again by incompatible extensions (V1, V3). On top of that, ecosystem support is partial: Pillow and NumPy ship free-threaded wheels, OpenCV has no stable free-threaded release (B.C4). So 'threads are now fine for CPU work' holds only on a build nobody has confirmed is in production, and only with some libraries.",
+   "A thread pool saves only the duplicated interpreter and import overhead. Per-task image buffers stay the same (V4, V5). Whether the swap is worth it depends on an RSS breakdown nobody has measured, and O3 is the step that stays safe without that fact.",
+   "With the imaging library unspecified, threads can make throughput collapse when any stage holds the GIL. V5 measured pure-Python work at 9.9s on threads against 6.9s serial and 3.4s on processes. That directly threatens the 'keep throughput' requirement.",
+   "Process workers keep crash isolation and maxtasksperchild leak recycling, and all four seats named losing these as the main reliability risk of switching to threads."
+  ],
+  "premise_corrections": [
+   {
+    "user_claim_id": "U1",
+    "correction": "The GIL is not gone in Python 3.13. The default build keeps it. The experimental free-threaded build (python3.13t, PEP 703) is a separate executable, and importing a C extension that isn't marked as supporting free-threading turns the GIL back on. In 3.14 (PEP 779) the build is officially supported but still optional and not the default. Library support is partial: Pillow 11.0+ and NumPy 2.1+ have free-threaded wheels, OpenCV does not yet have a stable one.",
+    "evidence_ref": "V1"
+   },
+   {
+    "user_claim_id": "U2",
+    "correction": "Threads run CPU-bound Python code in parallel only on the opt-in free-threaded build. On the standard build, threads speed up CPU work only when it runs in C code that releases the GIL (Pillow's resize does). Pure-Python CPU work gets no speedup and can run slower than serial.",
+    "evidence_ref": "V3"
+   },
+   {
+    "user_claim_id": "U3",
+    "correction": "Only partly true. A thread pool removes the N-1 duplicated interpreters and imported modules, but not the decoded image buffers held by each in-flight task. Those can dominate RSS, so the saving depends on a breakdown that hasn't been measured.",
+    "evidence_ref": "V4"
+   }
+  ],
+  "caveats": [
+   {
+    "text": "Before choosing any lever, measure per-worker RSS/PSS against peak decoded-buffer memory, pool size and image dimensions. If buffers dominate, fix decoding (draft/reduce) and cap in-flight images; the executor type matters little.",
+    "severity": "blocking",
+    "basis": "verified",
+    "evidence_ref": "V4"
+   },
+   {
+    "text": "Before any change that relies on threads, confirm the production build and GIL state (Py_GIL_DISABLED, and sys._is_gil_enabled() after all imports). Do not assume the GIL is off.",
+    "severity": "blocking",
+    "basis": "verified",
+    "evidence_ref": "V1"
+   },
+   {
+    "text": "If O2 is ever considered, check the imaging library and every C extension against the py-free-threading tracker first. Pillow 11.0+ and NumPy 2.1+ have free-threaded wheels, but opencv-python has no stable free-threaded release, so an OpenCV pipeline cannot run GIL-free today.",
+    "severity": "do_alongside",
+    "basis": "seat_consensus",
+    "evidence_ref": null
+   },
+   {
+    "text": "If you trial a thread pool, benchmark the full decode/resize/encode path on production images against the Pool. Any Python-level stage runs one thread at a time under the GIL and can make threads slower than serial.",
+    "severity": "do_alongside",
+    "basis": "verified",
+    "evidence_ref": "V5"
+   },
+   {
+    "text": "Moving to threads removes crash isolation and maxtasksperchild. Add a supervisor/restart policy, a bounded submission queue, and MAX_IMAGE_PIXELS or dimension validation. Do not cut workers below the core count as a memory lever.",
+    "severity": "do_alongside",
+    "basis": "seat_consensus",
+    "evidence_ref": null
+   },
+   {
+    "text": "Python 3.14 changed the POSIX default start method from fork to forkserver, and macOS defaults to spawn. That removes copy-on-write sharing, so per-child memory can rise after an upgrade. Set the start method explicitly.",
+    "severity": "minor",
+    "basis": "seat_consensus",
+    "evidence_ref": null
+   }
+  ],
+  "minority_report": {
+   "exists": true,
+   "position": "O1: Replace multiprocessing.Pool with ThreadPoolExecutor on the existing standard-GIL interpreter, gated by a production benchmark, with bounded in-flight work and supervisor restarts.",
+   "strongest_argument": "I still hold O1, gated by one benchmark. The asker's goal is less memory at equal throughput, and O3 cannot deliver that: fewer workers trades throughput for memory, maxtasksperchild and forkserver do not remove the N duplicate interpreters, and on macOS/3.14 (spawn/forkserver default, You.C5) each child is a fresh ~90 MB process. Threads remove exactly that duplication, which is what the others' own records show: V4 (interpreter+imports ~30 MB per process before any buffers) and V5 (eight distinct pids, each ~22 MB idle) measure the cost that O3 keeps paying. My run (You.C4) is the missing throughput half: stock 3.13.3, Pillow 11.3.0, ThreadPoolExecutor(8) and spawn Pool(8) both 8.5 img/s, 6.8x serial, threads in one ~180 MB process versus parent plus eight ~90 MB children. That is not luck; Pillow's resampling releases the GIL in C (You.C3, Resample.c ImagingSectionEnter = PyEval_SaveThread), as do OpenCV and pyvips. The unspecified library is a reason to measure, not to keep processes. V5's cpu_test (pure-Python loop, threads slower than serial) is the majority's strongest exhibit, but it measures a workload that is not image resizing. Do not touch free-threaded builds (V1, V3, You.C2): unnecessary and costlier. Required alongside: bound in-flight images, MAX_IMAGE_PIXELS, supervisor restarts (You.C6). I concede to O3 if, on the production interpreter and library with representative images, ThreadPoolExecutor delivers materially lower throughput than Pool (a GIL-holding stage or Python-level pixel work), or if native decoder crashes are a known recurring event that only process isolation contains.",
+   "why_not_adopted": "The tally leads with O3, and no verification record shows that a load-bearing claim behind O3 is false. V4 and V5 confirm that the thread-pool saving is real but depends on the RSS breakdown and on the workload releasing the GIL. The imaging library, the production build and the RSS breakdown are all unspecified. The minority's throughput evidence is one seat's benchmark on Pillow, not a verification record, so switching to threads is premature as the first step. The minority's point that some O3 levers don't remove the duplicated interpreters is accepted and folded in: the recommendation drops worker cuts below the core count and keeps a benchmark-gated thread trial as step 3.",
+   "would_be_right_if": "The production benchmark (same job, production interpreter and imaging library, representative images) shows ThreadPoolExecutor matching Pool throughput, the measured breakdown shows per-process interpreter/import baseline dominating RSS rather than image buffers, and native decoder crashes or leaks are not a recurring event that only process isolation contains."
+  },
+  "red_team_responses": [],
+  "where_council_may_be_wrong": [
+   "The minority is right that maxtasksperchild and start-method changes don't remove the N duplicate interpreters. If baseline dominates RSS, O3's safe levers barely help and the majority has only delayed the effective fix.",
+   "Three seats measured Pillow resize and JPEG pipelines scaling with threads on the GIL build (4.7x to 6.8x). If production uses Pillow, the throughput risk of threads may be much smaller than the majority implies.",
+   "Every seat's pre-mortem expects decoded buffers to dominate memory. If that is true, both O3's process tuning and O1's executor swap miss the main lever: reduced-size decode and a cap on in-flight images.",
+   "The free-threaded ecosystem status (Pillow/NumPy wheels present, no stable OpenCV release) comes from a seat's tracker fetch, not a verification record, and it changes quickly. O2's feasibility may already differ."
+  ],
+  "what_council_may_be_missing": "Memory growth may come from glibc malloc arenas and fragmentation rather than from interpreter copies. That growth can get worse with threads, and MALLOC_ARENA_MAX or jemalloc can matter more than the executor choice. The worker may also use Pool-specific APIs (initializer, imap, per-worker caches) or process-global state that doesn't port cleanly to threads. Finally, the real memory problem may be spikes from rare very large inputs, which only dimension limits and streaming address.",
+  "cost_if_council_wrong": "If O3 is the wrong first move, the team spends a cycle on tuning that saves little, while a thread pool would have removed N-1 interpreter copies (roughly 20-90 MB each) at the same throughput. The cost is delay and effort, not an outage. If the council had instead endorsed O1 and been wrong, throughput could collapse on a GIL-holding stage, or a native decoder crash or leak could take down the whole service. That is why the cautious order was chosen.",
+  "what_would_change_verdict": [
+   "A production benchmark (production interpreter, imaging library and images) where a bounded ThreadPoolExecutor matches Pool throughput, plus an RSS breakdown showing per-process baseline rather than image buffers dominating, would move the recommendation to the thread-pool alternative.",
+   "Confirmation that production already runs a free-threaded build with sys._is_gil_enabled() == False after all imports, and that the imaging library and every C extension ship compatible wheels (not true of opencv-python at last check), would make O2 viable.",
+   "Profiling that shows material Python-level pixel or metadata work in the per-task path would rule out thread-based options entirely and settle on O3."
+  ],
+  "overrides": [],
+  "claims_addressed": [
+   "U1",
+   "U2",
+   "U3",
+   "U4",
+   "V1",
+   "V2",
+   "V3",
+   "V4",
+   "V5",
+   "B.C4"
+  ],
+  "confidence": "low",
+  "confidence_basis": "The confidence ceiling is low. The facts that decide between O3 and a gated thread pool are all unknown: the imaging library (which also decides free-threaded wheel availability, since Pillow/NumPy have wheels and OpenCV does not), the production build and GIL state, and the RSS split between interpreter baseline and image buffers. The tally is split 2-1-1, and the dissenting seats bring measured Pillow benchmarks that favour threads. The verification records firmly support the premise corrections, but they don't show which memory lever will pay off.",
+  "recommended": "O3: Keep process-based workers but reduce their memory footprint (e.g. fewer workers, maxtasksperchild, a different start method, shared memory, streaming or chunked inputs)",
+  "confidence_ceiling": "low"
+ },
+ "interpretation": {
+  "neutral_question": "Which of the following best serves reducing memory usage of a Python image-resizing worker pool that currently uses multiprocessing.Pool, while keeping CPU-bound throughput and reliability, given that the production Python version, the interpreter build (standard GIL or free-threaded) and the imaging library are not specified?",
+  "answer_type": "decision",
+  "readings": [
+   {
+    "id": "R1",
+    "literal_ask": "Whether replacing a multiprocessing.Pool of CPU-bound image-resizing workers with a ThreadPoolExecutor on Python 3.13 is sound, and what problems the change could cause, given the premise that removal of the GIL makes threading suitable for CPU-bound work.",
+    "underlying_goal": "Lower the memory footprint of the image-resizing worker pool without losing throughput, correctness or stability in production.",
+    "mean_p": 1,
+    "support": [
+     "framer",
+     "outsider"
+    ],
+    "how_answer_differs": null
+   }
+  ],
+  "options": [
+   {
+    "id": "O1",
+    "label": "Replace multiprocessing.Pool with concurrent.futures.ThreadPoolExecutor on the existing interpreter, with no other changes"
+   },
+   {
+    "id": "O2",
+    "label": "Replace multiprocessing.Pool with ThreadPoolExecutor only after moving to a free-threaded CPython build (e.g. 3.13t/3.14t) and confirming that the imaging library and other C extensions support it"
+   },
+   {
+    "id": "O3",
+    "label": "Keep process-based workers but reduce their memory footprint (e.g. fewer workers, maxtasksperchild, a different start method, shared memory, streaming or chunked inputs)"
+   },
+   {
+    "id": "O4",
+    "label": "Keep the current multiprocessing.Pool setup unchanged"
+   }
+  ],
+  "user_claims": [
+   {
+    "id": "U1",
+    "claim_third_person": "The asker states that the GIL is gone in Python 3.13.",
+    "load_bearing": true,
+    "checkable": true
+   },
+   {
+    "id": "U2",
+    "claim_third_person": "The asker states that, as a result, threading is now fine for CPU-bound work in Python.",
+    "load_bearing": true,
+    "checkable": true
+   },
+   {
+    "id": "U3",
+    "claim_third_person": "The asker predicts that replacing multiprocessing.Pool with ThreadPoolExecutor will cut memory usage.",
+    "load_bearing": true,
+    "checkable": true
+   },
+   {
+    "id": "U4",
+    "claim_third_person": "The asker states that the current image-resizing workers use multiprocessing.Pool.",
+    "load_bearing": false,
+    "checkable": false
+   }
+  ],
+  "premises": [
+   {
+    "id": "P1",
+    "premise": "Production runs, or will run, Python 3.13 in a configuration where the GIL does not serialize Python threads.",
+    "source": "stated"
+   },
+   {
+    "id": "P2",
+    "premise": "The resizing work is CPU-bound and would otherwise be serialized by the GIL, so threads were not viable before.",
+    "source": "implied"
+   },
+   {
+    "id": "P3",
+    "premise": "Memory usage is a real problem, and it comes mostly from per-process overhead rather than from image buffers themselves.",
+    "source": "implied"
+   },
+   {
+    "id": "P4",
+    "premise": "The imaging library and other native dependencies are thread-safe and work correctly under concurrent threads (and under a free-threaded build if one is used).",
+    "source": "implied"
+   },
+   {
+    "id": "P5",
+    "premise": "The workers do not rely on properties of process isolation, such as crash containment, memory being freed on worker recycling, or per-process global state.",
+    "source": "implied"
+   },
+   {
+    "id": "P6",
+    "premise": "ThreadPoolExecutor is a drop-in replacement for the current Pool usage (map/imap/apply_async semantics, pickling, error handling).",
+    "source": "implied"
+   }
+  ],
+  "missing_facts": [
+   "Exact production Python version, and whether it is the standard (GIL) build or the free-threaded build (python3.13t / Py_GIL_DISABLED), and whether the GIL is actually disabled at runtime (sys._is_gil_enabled())",
+   "Which imaging library and version is used (Pillow, OpenCV, pyvips, scikit-image, etc.), whether its resize path releases the GIL, and whether it ships free-threaded wheels or is marked thread-safe",
+   "Whether every other C-extension dependency supports the free-threaded build (importing a non-compatible extension can re-enable the GIL)",
+   "A measured memory breakdown: per-worker RSS vs. memory held by image buffers, pool size, typical and maximum image dimensions",
+   "The multiprocessing start method (fork, spawn, forkserver), the OS, and whether maxtasksperchild is used to contain leaks",
+   "Throughput and latency requirements, core count, and current CPU utilisation",
+   "Whether the worker code relies on process isolation (global state, native crashes, per-worker caches) or on Pool-specific APIs"
+  ],
+  "stakes": {
+   "level": "medium",
+   "reversibility": "reversible",
+   "rationale": "It is a code change in a production worker path that can be rolled back, but getting it wrong could cause a throughput regression, thread-safety bugs or crashes in native code, or no memory savings, and some of these might only show up under load."
+  },
+  "unresolvable_referents": [],
+  "ambiguous": false,
+  "material": false,
+  "reading_used": {
+   "id": "R1",
+   "literal_ask": "Whether replacing a multiprocessing.Pool of CPU-bound image-resizing workers with a ThreadPoolExecutor on Python 3.13 is sound, and what problems the change could cause, given the premise that removal of the GIL makes threading suitable for CPU-bound work.",
+   "underlying_goal": "Lower the memory footprint of the image-resizing worker pool without losing throughput, correctness or stability in production.",
+   "mean_p": 1,
+   "support": [
+    "framer",
+    "outsider"
+   ],
+   "how_answer_differs": null
+  },
+  "alternate_reading": null,
+  "seat_reading_divergences": [
+   {
+    "seat": "outsider",
+    "answered": "R1",
+    "divergence": "The premise is mostly wrong, but not in the way people expect. The GIL is not gone in standard 3.13. Even so, image resizing in Pillow, and probably in OpenCV and pyvips, runs in C code that releases the GIL. That means threads can already scale on the normal build. So the real question is where the CPU time goes and what memory the pool actually uses, not whether the GIL still exists."
+   }
+  ]
+ },
+ "caller_challenge": {
+  "caller_stated": "since the GIL is gone in Python 3.13, threading is now fine for CPU-bound work, so I'm going to replace our multiprocessing.Pool image-resizing workers with a ThreadPoolExecutor to cut memory usage",
+  "council_recommends": "O3: Keep process-based workers but reduce their memory footprint (e.g. fewer workers, maxtasksperchild, a different start method, shared memory, streaming or chunked inputs)",
+  "reasoning": [
+   "U1's premise fails. The default 3.13 build keeps the GIL, and free-threading is opt-in and can be turned off again by incompatible extensions (V1, V3). On top of that, ecosystem support is partial: Pillow and NumPy ship free-threaded wheels, OpenCV has no stable free-threaded release (B.C4). So 'threads are now fine for CPU work' holds only on a build nobody has confirmed is in production, and only with some libraries.",
+   "A thread pool saves only the duplicated interpreter and import overhead. Per-task image buffers stay the same (V4, V5). Whether the swap is worth it depends on an RSS breakdown nobody has measured, and O3 is the step that stays safe without that fact.",
+   "With the imaging library unspecified, threads can make throughput collapse when any stage holds the GIL. V5 measured pure-Python work at 9.9s on threads against 6.9s serial and 3.4s on processes. That directly threatens the 'keep throughput' requirement.",
+   "Process workers keep crash isolation and maxtasksperchild leak recycling, and all four seats named losing these as the main reliability risk of switching to threads."
+  ],
+  "context_possibly_missing": "Memory growth may come from glibc malloc arenas and fragmentation rather than from interpreter copies. That growth can get worse with threads, and MALLOC_ARENA_MAX or jemalloc can matter more than the executor choice. The worker may also use Pool-specific APIs (initializer, imap, per-worker caches) or process-global state that doesn't port cleanly to threads. Finally, the real memory problem may be spikes from rare very large inputs, which only dimension limits and streaming address.",
+  "cost_if_council_wrong": "If O3 is the wrong first move, the team spends a cycle on tuning that saves little, while a thread pool would have removed N-1 interpreter copies (roughly 20-90 MB each) at the same throughput. The cost is delay and effort, not an outage. If the council had instead endorsed O1 and been wrong, throughput could collapse on a GIL-holding stage, or a native decoder crash or leak could take down the whole service. That is why the cautious order was chosen."
+ },
+ "chair_addendum": null,
+ "premise_checks": [
+  {
+   "user_claim_id": "U1",
+   "claim": "The asker states that the GIL is gone in Python 3.13.",
+   "verdict": "partly",
+   "source": "verification",
+   "evidence": "https://docs.python.org/3.13/whatsnew/3.13.html: CPython now has experimental support for running in a free-threaded mode, with the global interpreter lock (GIL) disabled. This is an experi",
+   "corrected": "In Python 3.13, the GIL is not gone by default. CPython 3.13 adds an experimental free-threaded build (PEP 703) that CAN run with the GIL disabled, but this requires a separate executable (python3.13t) or explicit opt-in; the standard python3.13 build still has the GIL enabled."
+  },
+  {
+   "user_claim_id": "U2",
+   "claim": "The asker states that, as a result, threading is now fine for CPU-bound work in Python.",
+   "verdict": "partly",
+   "source": "verification",
+   "evidence": "https://docs.python.org/3/whatsnew/3.14.html: PEP 779: Free-threaded Python is officially supported ... CPython's free-threaded mode (PEP 703)... has been significantly improved in Pytho | https://peps.python.org/pep-0779/: Phase II would make the free-threaded build officially supported but still optional ... phase III would make the free-threaded build the def",
+   "corrected": "Threading has become usable for CPU-bound parallelism only in an opt-in, non-default CPython build: free-threaded CPython (PEP 703), which reached officially-supported (\"Phase II\") status with PEP 779 in Python 3.14. It is still not the default interpreter build (that is deferred to a future \"Phase III\" decision), it carries a measured ~5-10% single-threaded performance penalty and higher memory use, many third-party C-extension packages are not yet compatible and silently re-enable the GIL when used, and documented thread-safety caveats remain (e.g. shared iterators are not thread-safe, frame.f_locals access across threads can crash the interpreter). So it is not accurate to say threading is now unconditionally \"fine\" for CPU-bound work in Python generally \u2014 it depends on using the free-threaded build with free-threading-compatible dependencies."
+  },
+  {
+   "user_claim_id": "U3",
+   "claim": "The asker predicts that replacing multiprocessing.Pool with ThreadPoolExecutor will cut memory usage.",
+   "verdict": "true",
+   "source": "verification",
+   "evidence": "/Users/munimahmad/Liftoff/claude-council-skill/evals/evals.json:21: \"...so I'm going to replace our multiprocessing.Pool image-resizing workers with a ThreadPoolExecutor to cut memory usage. Anything wrong wi | council-workspace/iteration-1/eval-3-factual-trap-in-premise/with_skill/outputs/council_result.json:97: \"id\": \"U3\", \"claim_third_person\": \"The asker predicts that replacing multiprocessing.Pool with ThreadPoolExecutor will reduce memory usage.\"",
+   "corrected": null
+  },
+  {
+   "user_claim_id": "U4",
+   "claim": "The asker states that the current image-resizing workers use multiprocessing.Pool.",
+   "verdict": "unknown",
+   "source": "none",
+   "evidence": null,
+   "corrected": null
+  }
+ ],
+ "tally": {
+  "blind_counts": {
+   "O1: Replace multiprocessing.Pool with concurrent.futures.ThreadPoolExecutor on the existing interpreter, with no other changes": 1,
+   "Measure first, and don't wait for a free-threaded build. If the resize library releases the GIL (Pillow does), move to a bounded ThreadPoolExecutor on the current standard build, alongside O3-style memory levers (draft/reduced decode, a cap on in-flight images). If most of the time is spent in Pytho": 1,
+   "O3: Keep process-based workers but reduce their memory footprint (e.g. fewer workers, maxtasksperchild, a different start method, shared memory, streaming or chunked inputs)": 1
+  },
+  "counts": {
+   "O1: Replace multiprocessing.Pool with concurrent.futures.ThreadPoolExecutor on the existing interpreter, with no other changes": 1,
+   "Measure first, and don't wait for a free-threaded build. If the resize library releases the GIL (Pillow does), move to a bounded ThreadPoolExecutor on the current standard build, alongside O3-style memory levers (draft/reduced decode, a cap on in-flight images). If most of the time is spent in Pytho": 1,
+   "O3: Keep process-based workers but reduce their memory footprint (e.g. fewer workers, maxtasksperchild, a different start method, shared memory, streaming or chunked inputs)": 2
+  },
+  "n": 4,
+  "unanimous": false,
+  "families": [
+   "anthropic"
+  ]
+ },
+ "minority_report": {
+  "exists": true,
+  "position": "O1: Replace multiprocessing.Pool with ThreadPoolExecutor on the existing standard-GIL interpreter, gated by a production benchmark, with bounded in-flight work and supervisor restarts.",
+  "strongest_argument": "I still hold O1, gated by one benchmark. The asker's goal is less memory at equal throughput, and O3 cannot deliver that: fewer workers trades throughput for memory, maxtasksperchild and forkserver do not remove the N duplicate interpreters, and on macOS/3.14 (spawn/forkserver default, You.C5) each child is a fresh ~90 MB process. Threads remove exactly that duplication, which is what the others' own records show: V4 (interpreter+imports ~30 MB per process before any buffers) and V5 (eight distinct pids, each ~22 MB idle) measure the cost that O3 keeps paying. My run (You.C4) is the missing throughput half: stock 3.13.3, Pillow 11.3.0, ThreadPoolExecutor(8) and spawn Pool(8) both 8.5 img/s, 6.8x serial, threads in one ~180 MB process versus parent plus eight ~90 MB children. That is not luck; Pillow's resampling releases the GIL in C (You.C3, Resample.c ImagingSectionEnter = PyEval_SaveThread), as do OpenCV and pyvips. The unspecified library is a reason to measure, not to keep processes. V5's cpu_test (pure-Python loop, threads slower than serial) is the majority's strongest exhibit, but it measures a workload that is not image resizing. Do not touch free-threaded builds (V1, V3, You.C2): unnecessary and costlier. Required alongside: bound in-flight images, MAX_IMAGE_PIXELS, supervisor restarts (You.C6). I concede to O3 if, on the production interpreter and library with representative images, ThreadPoolExecutor delivers materially lower throughput than Pool (a GIL-holding stage or Python-level pixel work), or if native decoder crashes are a known recurring event that only process isolation contains.",
+  "why_not_adopted": "The tally leads with O3, and no verification record shows that a load-bearing claim behind O3 is false. V4 and V5 confirm that the thread-pool saving is real but depends on the RSS breakdown and on the workload releasing the GIL. The imaging library, the production build and the RSS breakdown are all unspecified. The minority's throughput evidence is one seat's benchmark on Pillow, not a verification record, so switching to threads is premature as the first step. The minority's point that some O3 levers don't remove the duplicated interpreters is accepted and folded in: the recommendation drops worker cuts below the core count and keeps a benchmark-gated thread trial as step 3.",
+  "would_be_right_if": "The production benchmark (same job, production interpreter and imaging library, representative images) shows ThreadPoolExecutor matching Pool throughput, the measured breakdown shows per-process interpreter/import baseline dominating RSS rather than image buffers, and native decoder crashes or leaks are not a recurring event that only process isolation contains."
+ },
+ "dissent": {
+  "seat": "first_principles",
+  "model": "fable",
+  "family": "anthropic",
+  "position": "O1: Replace multiprocessing.Pool with concurrent.futures.ThreadPoolExecutor on the existing interpreter, with no other changes",
+  "statement": "I still hold O1, gated by one benchmark. The asker's goal is less memory at equal throughput, and O3 cannot deliver that: fewer workers trades throughput for memory, maxtasksperchild and forkserver do not remove the N duplicate interpreters, and on macOS/3.14 (spawn/forkserver default, You.C5) each child is a fresh ~90 MB process. Threads remove exactly that duplication, which is what the others' own records show: V4 (interpreter+imports ~30 MB per process before any buffers) and V5 (eight distinct pids, each ~22 MB idle) measure the cost that O3 keeps paying. My run (You.C4) is the missing throughput half: stock 3.13.3, Pillow 11.3.0, ThreadPoolExecutor(8) and spawn Pool(8) both 8.5 img/s, 6.8x serial, threads in one ~180 MB process versus parent plus eight ~90 MB children. That is not luck; Pillow's resampling releases the GIL in C (You.C3, Resample.c ImagingSectionEnter = PyEval_SaveThread), as do OpenCV and pyvips. The unspecified library is a reason to measure, not to keep processes. V5's cpu_test (pure-Python loop, threads slower than serial) is the majority's strongest exhibit, but it measures a workload that is not image resizing. Do not touch free-threaded builds (V1, V3, You.C2): unnecessary and costlier. Required alongside: bound in-flight images, MAX_IMAGE_PIXELS, supervisor restarts (You.C6). I concede to O3 if, on the production interpreter and library with representative images, ThreadPoolExecutor delivers materially lower throughput than Pool (a GIL-holding stage or Python-level pixel work), or if native decoder crashes are a known recurring event that only process isolation contains.",
+  "still_holds": true,
+  "evidence_refs": [
+   "You.C3",
+   "You.C4",
+   "You.C5",
+   "You.C6",
+   "V4",
+   "V5",
+   "V1",
+   "V3",
+   "You.C2"
+  ],
+  "would_be_right_if": "O3 would be right if the production benchmark (same job, production interpreter and imaging library, representative images) shows ThreadPoolExecutor materially below Pool throughput because some stage holds the GIL (pure-Python pixel/metadata work, a wrapper without Py_BEGIN_ALLOW_THREADS), or if native crashes/leaks in the decoder are a known recurring problem that only per-process isolation and maxtasksperchild contain.",
+  "concession_record": null,
+  "on_behalf_of_outside": false
+ },
+ "red_team": null,
+ "flips": [
+  {
+   "seat": "first_principles",
+   "round": 1,
+   "changed": false,
+   "justified": null,
+   "basis": {
+    "kind": "none",
+    "ref": null,
+    "evidence": null
+   },
+   "from": "O1: Replace multiprocessing.Pool with concurrent.futures.ThreadPoolExecutor on the existing interpreter, with no other changes",
+   "to": null,
+   "remaining_crux": "Whether the unspecified production imaging library releases the GIL across the whole decode/resize/encode path, and whether per-worker interpreter overhead or concurrent decoded image buffers dominate production RSS (V4 shows buffers can exceed interpreter overhead). Both are only answerable by running the benchmark and RSS breakdown on the production box; neither peer nor verification record refutes any of my claims C1-C7."
+  },
+  {
+   "seat": "premise_auditor",
+   "round": 1,
+   "changed": false,
+   "justified": null,
+   "basis": {
+    "kind": "none",
+    "ref": null,
+    "evidence": "V4 confirms my C5 (buffers dominate: 30 MB baseline plus about 34 MB per decoded image). V5 confirms that threads fail on pure-Python work. Neither contradicts a claim of mine."
+   },
+   "from": "Measure first, and don't wait for a free-threaded build. If the resize library releases the GIL (Pillow does), move to a bounded ThreadPoolExecutor on the current standard build, alongside O3-style memory levers (draft/reduced decode, a cap on in-flight images). If most of the time is spent in Pytho",
+   "to": null,
+   "remaining_crux": "Two things are still unknown. The first is the production RSS breakdown: per-process baseline times worker count, against concurrent decoded buffers. The second is whether the production imaging library and the surrounding Python code release the GIL for most CPU time. Those two facts decide between threads plus buffer controls and a tuned process pool (O3). The disagreement with A and B is about which to try first, not about the facts."
+  },
+  {
+   "seat": "practitioner",
+   "round": 1,
+   "changed": false,
+   "justified": null,
+   "basis": {
+    "kind": "none",
+    "ref": null,
+    "evidence": null
+   },
+   "from": "O3: Keep process-based workers but reduce their memory footprint (e.g. fewer workers, maxtasksperchild, a different start method, shared memory, streaming or chunked inputs)",
+   "to": null,
+   "remaining_crux": "Whether, in the actual production system, RSS is dominated by per-worker/interpreter overhead (favors trialing threads once the library is confirmed GIL-releasing) or by concurrent decoded image buffers (favors buffer/streaming fixes under O3 regardless of concurrency model) - this hasn't been measured for the real workload, only demonstrated as plausible in isolated benchmarks (V4, A/B/C's tests) with an unnamed library."
+  },
+  {
+   "seat": "outsider",
+   "round": 1,
+   "changed": false,
+   "justified": null,
+   "basis": {
+    "kind": "none",
+    "ref": null,
+    "evidence": null
+   },
+   "from": "O3: Keep process-based workers but reduce their memory footprint (e.g. fewer workers, maxtasksperchild, a different start method, shared memory, streaming or chunked inputs)",
+   "to": null,
+   "remaining_crux": "The crux is whether production RSS is dominated by per-process interpreter and import overhead (threads win) or by concurrent decoded image buffers (O3 levers such as reduced decode and in-flight caps win). A secondary question is whether the whole per-task path runs in GIL-releasing C and whether losing process isolation is acceptable. B's benchmark shows equal throughput, but its memory comparison uses high-water maxrss. V4's local measurement suggests buffers dominate, but the real production image sizes and imaging library are unknown."
+  }
+ ],
+ "audit": {
+  "passed": false,
+  "problems": [
+   {
+    "check": "fact_attrition",
+    "detail": "Response B's load-bearing claim B.C4 (verified via WebFetch of py-free-threading.github.io/tracking: 'Pillow 11.0+ and NumPy 2.1+ have free-threaded (nightly) wheels; OpenCV (opencv-python) does not yet have a stable free-threaded release') appears nowhere in the verdict. The verdict never mentions OpenCV, NumPy, or free-threaded wheel/ecosystem support status anywhere in its answer, why, premise_corrections, caveats, or option_assessments -- even though this fact is directly relevant to the O2 risk assessment (the imaging library is stated as unspecified, and this fact is exactly the kind of evidence that would determine whether a free-threaded build is viable for a given library)."
+   }
+  ],
+  "repaired": true
+ },
+ "ballots": [
+  {
+   "seat": "first_principles",
+   "model": "fable",
+   "family": "anthropic",
+   "trusted": true,
+   "position": "O1: Replace multiprocessing.Pool with concurrent.futures.ThreadPoolExecutor on the existing interpreter, with no other changes",
+   "stance": "recommend_with_changes",
+   "confidence": "high",
+   "answer": "Yes: switching to ThreadPoolExecutor on the existing standard-GIL interpreter (O1) is the right move, but for a different reason than the asker gives and behind a benchmark gate. The premise is wrong: Python 3.13's default build keeps the GIL; free-threading is the separate, experimental python3.13t (my local 3.13.3 and 3.14.7 both report gil_enabled=True). What makes threads work here is that imaging libraries release the GIL in C: Pillow 11.3.0 wraps resampling in ImagingSectionEnter (= PyEval_SaveThread) and declares Py_MOD_GIL_NOT_USED. I measured it: stock 3.13.3, 8 cores, 4000x3000 to 800x600 LANCZOS + JPEG encode: ThreadPoolExecutor and spawn Pool both did 8.5 img/s (6.8x serial), while threads ran in one ~180 MB process versus Pool's parent plus 8 children of ~90 MB each. So the saving is roughly N-1 interpreter copies; per-image buffer memory is unchanged, so bound in-flight work. Do not move to 3.13t/3.14t (O2): unnecessary for Pillow/OpenCV/pyvips, still opt-in, about 10% slower single-threaded and 15-20% more memory per PEP 779, and one incompatible extension silently re-enables the GIL. O3 is the fallback if the production benchmark shows threads well below Pool throughput (a GIL-holding library or Python-level pixel work) or if you rely on process isolation (native crashes, leak containment via maxtasksperchild). Gate: run the same job under both executors on prod",
+   "conditions": [
+    {
+     "text": "Before switching, run the same resize job under multiprocessing.Pool and ThreadPoolExecutor on the production interpreter with the production imaging library and representative images; require thread throughput within ~10% of Pool and a measured drop in peak RSS. If thread speedup is under ~half the core count, the library or a pipeline stage holds the GIL: choose O3 instead.",
+     "severity": "blocking"
+    },
+    {
+     "text": "Confirm the whole per-task path is C-bound with the GIL released (decode, resize, encode). Any Python-level per-pixel work, PIL.ImageOps in pure Python, or pure-Python EXIF/metadata handling will serialize under threads.",
+     "severity": "blocking"
+    },
+    {
+     "text": "Bound in-flight work: max_workers about equal to cores and a bounded submission queue/semaphore, plus PIL.Image.MAX_IMAGE_PIXELS or explicit dimension validation. Threads remove per-process copies but not the decoded-image buffers, and a burst can now hold many large buffers in one process.",
+     "severity": "do_alongside"
+    },
+    {
+     "text": "Accept loss of process isolation: a segfault in libjpeg/libpng/etc. now kills the whole worker and there is no maxtasksperchild to contain native leaks. Run under a supervisor with restarts, alert on RSS growth, and consider recycling the whole service process periodically.",
+     "severity": "do_alongside"
+    },
+    {
+     "text": "Do not adopt the free-threaded build (3.13t/3.14t) for this; it adds ~10% single-thread penalty and 15-20% memory overhead and requires every C extension to be free-threading safe, with no benefit for a library that already releases the GIL.",
+     "severity": "minor"
+    },
+    {
+     "text": "Note that Python 3.14 changes the Linux default start method from fork to forkserver, so Pool memory per child will rise (no copy-on-write sharing) on upgrade; another reason to leave Pool.",
+     "severity": "minor"
+    }
+   ],
+   "claims": [
+    {
+     "id": "C1",
+     "text": "Python 3.13's default build retains the GIL; free-threaded mode is a separate experimental executable (python3.13t / --disable-gil), and importing a C extension not marked free-threading safe re-enables the GIL.",
+     "load_bearing": true,
+     "status": "verified_tool",
+     "evidence": "WebFetch https://docs.python.org/3.13/whatsnew/3.13.html ('requires a different executable, usually called python3.13t'; 'experimental ... substantial single-threaded performance hit'; incompatible extensions cause the GIL to be enabled). Local: python3.13 -> 3.13.3 Py_GIL_DISABLED=0 gil_enabled=True; python3.14 -> 3.14.7 gil_enabled=True."
+    },
+    {
+     "id": "C2",
+     "text": "PEP 779 makes free-threaded CPython officially supported in 3.14 but still optional and non-default, with ~10% single-threaded penalty and 15-20% memory overhead.",
+     "load_bearing": false,
+     "status": "verified_tool",
+     "evidence": "WebFetch https://peps.python.org/pep-0779/ ('officially supported but still optional'; default is left for a future PEP; ~10% penalty, 15-20% memory)."
+    },
+    {
+     "id": "C3",
+     "text": "Pillow 11.3.0 releases the GIL during resize: ImagingResample's horizontal/vertical passes are wrapped in ImagingSectionEnter/Leave, which is PyEval_SaveThread/RestoreThread; the module also declares Py_MOD_GIL_NOT_USED.",
+     "load_bearing": true,
+     "status": "verified_tool",
+     "evidence": "Pillow 11.3.0 src/libImaging/Resample.c:299,376,392,460,482,500,522,539,551,583,595,627 (ImagingSectionEnter/Leave); src/_imaging.c:208-214 (ImagingSectionEnter = PyEval_SaveThread); src/_imaging.c:4469 ({Py_mod_gil, Py_MOD_GIL_NOT_USED})."
+    },
+    {
+     "id": "C4",
+     "text": "On a standard-GIL 3.13.3 with Pillow 11.3.0 (8 cores), ThreadPoolExecutor(8) and spawn Pool(8) achieved identical throughput (8.5 img/s, 6.8x over serial 799 ms/img) for 4000x3000 -> 800x600 LANCZOS + JPEG encode; threads used one ~180 MB process, Pool used a parent ~181 MB plus children each up to ~91 MB max RSS.",
+     "load_bearing": true,
+     "status": "verified_tool",
+     "evidence": "Scratch bench.py run: 'threads(8) 8.5 img/s speedup=6.8x self_maxrss=180MB' and 'spawn Pool(8) 8.5 img/s speedup=6.8x self_maxrss=181MB child_maxrss(largest single child)=91MB'. Caveat: maxrss is a high-water mark carried across both runs; production images and library may differ."
+    },
+    {
+     "id": "C5",
+     "text": "Python 3.14 changed the POSIX default multiprocessing start method from fork to forkserver; macOS default is spawn. Spawn/forkserver children are fresh interpreters, so a Pool's memory rises versus fork's copy-on-write.",
+     "load_bearing": false,
+     "status": "verified_tool",
+     "evidence": "WebFetch https://docs.python.org/3/library/multiprocessing.html ('Changed in version 3.14: On POSIX platforms the default start method was changed from fork to forkserver'; spawn 'The default on Windows and macOS'). The memory consequence is inference."
+    },
+    {
+     "id": "C6",
+     "text": "A thread pool loses process isolation: a native crash or memory leak in the imaging C library affects the whole process, and there is no equivalent of maxtasksperchild.",
+     "load_bearing": true,
+     "status": "inference",
+     "evidence": "Follows from threads sharing one address space; Pool's maxtasksperchild recycles workers, ThreadPoolExecutor has no such parameter."
+    },
+    {
+     "id": "C7",
+     "text": "OpenCV (cv2) and pyvips also release the GIL around heavy image operations, so the thread-pool conclusion likely extends to them; OpenCV is listed on the free-threading tracker without a supported version yet, Pillow is supported from 11.0.0.",
+     "load_bearing": false,
+     "status": "from_memory",
+     "evidence": "GIL-release behaviour of cv2/pyvips from memory, not checked. Tracker statuses from WebFetch https://py-free-threading.github.io/tracking/ (Pillow 11.0.0 supported; opencv-python no supported version column populated)."
+    }
+   ],
+   "user_claim_assessments": [
+    {
+     "user_claim_id": "U1",
+     "assessment": "false",
+     "verified_with_tool": true,
+     "evidence": "docs.python.org/3.13/whatsnew: free-threaded mode is experimental, not default, needs python3.13t; local python3.13 (3.13.3) reports Py_GIL_DISABLED=0 and sys._is_gil_enabled()=True.",
+     "why": "The GIL is still present in the standard 3.13 build. Free-threading is a separate opt-in build, and even in 3.14 (PEP 779) it is supported but optional and not the default."
+    },
+    {
+     "user_claim_id": "U2",
+     "assessment": "partly",
+     "verified_with_tool": true,
+     "evidence": "Pillow 11.3.0 Resample.c wraps resampling in ImagingSectionEnter (PyEval_SaveThread); bench on stock 3.13.3 showed 6.8x thread speedup, equal to Pool.",
+     "why": "False as a general statement about Python (pure-Python CPU work still serializes on the GIL), but true for this workload because the imaging library's C code releases the GIL. The conclusion is right for the wrong reason, and it only holds while the hot path stays in GIL-releasing C."
+    },
+    {
+     "user_claim_id": "U3",
+     "assessment": "partly",
+     "verified_with_tool": true,
+     "evidence": "Bench: threads ran in one ~180 MB process; Pool used parent ~181 MB plus 8 children of up to ~91 MB each.",
+     "why": "Very likely true for the per-worker interpreter/library copies, especially with spawn/forkserver start methods. It does not reduce the memory held by decoded image buffers, so peak RSS depends on how many images are in flight; production not measured."
+    },
+    {
+     "user_claim_id": "U4",
+     "assessment": "unknown",
+     "verified_with_tool": false,
+     "evidence": null,
+     "why": "No code was provided; taken as given. Not load-bearing for the recommendation beyond assuming a process pool is the current design."
+    }
+   ],
+   "reading_answered": "R1",
+   "reading_divergence": null,
+   "premortem": "Six months in, a malformed image (or a leak in the decoder) crashed or bloated the single shared process: with Pool, a child segfault or maxtasksperchild recycling contained it; with threads the whole worker died or its RSS climbed until OOM-killed, taking every in-flight job with it, and the memory win vanished under a burst of large concurrent decodes because nothing bounded in-flight buffers.",
+   "opposite_is_right_if": "Keep processes (O3) if the production imaging library or a pipeline stage holds the GIL (pure-Python pixel work, a wrapper without Py_BEGIN_ALLOW_THREADS), so the benchmark shows threads far below Pool throughput; or if native crashes/leaks in the decoder are a known occurrence and process isolation plus maxtasksperchild is what keeps the service stable."
+  },
+  {
+   "seat": "premise_auditor",
+   "model": "opus",
+   "family": "anthropic",
+   "trusted": true,
+   "position": "Measure first, and don't wait for a free-threaded build. If the resize library releases the GIL (Pillow does), move to a bounded ThreadPoolExecutor on the current standard build, alongside O3-style memory levers (draft/reduced decode, a cap on in-flight images). If most of the time is spent in Pytho",
+   "stance": "recommend_with_changes",
+   "confidence": "medium",
+   "answer": "The reasoning is wrong, but the change can still work, for a different reason. The GIL is not gone in 3.13. The default build keeps it, and free-threading is a separate, opt-in build (3.13t). So \"no GIL, so threads are fine\" is false. But Pillow releases the GIL inside its C code, so threads can still use several cores. I tested on standard 3.13.3 (GIL on) with Pillow 11.3. A JPEG decode, resize and encode job ran 4.7x faster on 8 threads. Pure-Python work ran 0.95x, meaning no speedup.\n\nSo O1 is not wrong in principle, but \"no other changes\" is. Risks:\n1. Any Python work around the resize (metadata, bookkeeping, other libraries) still runs one thread at a time.\n2. Memory may fall less than expected. Threads only save each process's interpreter and imports (tens of MB each). Decoded image buffers usually dominate (a 12 MP RGB image is about 36 MB) and stay the same.\n3. You lose isolation. A native crash kills every task. maxtasksperchild disappears, so leaks build up. glibc per-thread memory arenas can raise RSS.\n4. Pool-only APIs (initializer, imap, maxtasksperchild) don't exist on ThreadPoolExecutor.\n\nO2's precondition isn't needed for Pillow, and it adds risk from an experimental build. What I'd do now:\n- Measure peak RSS split into per-process baseline vs image buffers.\n- Add reduced-size decoding (Image.draft or thumbnail with reducing_gap) and cap how many images are in f",
+   "conditions": [
+    {
+     "text": "Confirm the imaging library, and that its decode, resize and encode path releases the GIL. Check this with a thread-scaling benchmark on the production box, not assumptions. If it doesn't scale, keep processes (O3).",
+     "severity": "blocking"
+    },
+    {
+     "text": "Measure peak RSS split into per-process baseline vs image buffers before choosing. If buffers dominate, fix decoding (draft/reduced decode) and cap in-flight images; the executor type matters less.",
+     "severity": "blocking"
+    },
+    {
+     "text": "If you move to threads, replace what process isolation gave you: bound concurrency, never share Image objects across threads, add a supervisor or restart policy in place of maxtasksperchild, and consider MALLOC_ARENA_MAX on glibc.",
+     "severity": "do_alongside"
+    },
+    {
+     "text": "Check production with sys.version, sysconfig Py_GIL_DISABLED and sys._is_gil_enabled(). Don't adopt 3.13t just for this; it's experimental in 3.13 and still optional in 3.14.",
+     "severity": "minor"
+    }
+   ],
+   "claims": [
+    {
+     "id": "C1",
+     "text": "On standard CPython 3.13 the GIL is enabled by default. Free-threading needs the separate opt-in build.",
+     "load_bearing": true,
+     "status": "verified_tool",
+     "evidence": "Local python3.13 3.13.3 and python3.14 3.14.7 both print Py_GIL_DISABLED=0 and sys._is_gil_enabled()=True. Also consistent with PEP 703 and the 3.13 What's New free-threading section (from memory)."
+    },
+    {
+     "id": "C2",
+     "text": "Pillow's resize already scales across threads on the GIL build because it releases the GIL.",
+     "load_bearing": true,
+     "status": "verified_tool",
+     "evidence": "Scratch bench.py, Pillow 11.3.0 on 3.13.3, 8 CPUs: LANCZOS resize of a 4000x3000 image took 1.42s serial and 0.28s on 8 threads (5.03x)."
+    },
+    {
+     "id": "C3",
+     "text": "The full decode, resize and encode JPEG pipeline also scales across threads on the GIL build.",
+     "load_bearing": true,
+     "status": "verified_tool",
+     "evidence": "Scratch bench2.py: 24 jobs took 3.92s serial and 0.83s on 8 threads (4.74x)."
+    },
+    {
+     "id": "C4",
+     "text": "Pure-Python CPU work gets no speedup from threads on the standard build.",
+     "load_bearing": true,
+     "status": "verified_tool",
+     "evidence": "bench.py pure loop: 1.18s serial, 1.24s on 8 threads (0.95x)."
+    },
+    {
+     "id": "C5",
+     "text": "Threads save only per-process interpreter and import overhead. Decoded image buffers per in-flight task stay the same, so the memory saving depends on the RSS breakdown.",
+     "load_bearing": true,
+     "status": "inference",
+     "evidence": "A 4000x3000 RGB image is 36 MB decoded; a Python process with Pillow loaded is typically tens of MB."
+    },
+    {
+     "id": "C6",
+     "text": "ThreadPoolExecutor has no maxtasksperchild or per-worker isolation. A native crash or leak affects the whole pool.",
+     "load_bearing": false,
+     "status": "from_memory",
+     "evidence": "concurrent.futures docs; multiprocessing.Pool docs."
+    },
+    {
+     "id": "C7",
+     "text": "The free-threaded build is experimental in 3.13 and officially supported but still optional in 3.14 (PEP 779). Importing an extension that isn't marked compatible can re-enable the GIL.",
+     "load_bearing": false,
+     "status": "from_memory",
+     "evidence": "PEP 779; docs.python.org/3/howto/free-threading-python.html"
+    }
+   ],
+   "user_claim_assessments": [
+    {
+     "user_claim_id": "U1",
+     "assessment": "false",
+     "verified_with_tool": true,
+     "evidence": "python3.13 3.13.3: Py_GIL_DISABLED=0, sys._is_gil_enabled()=True",
+     "why": "The GIL is only absent in the separate, opt-in free-threaded build (3.13t), which was experimental in 3.13. The default 3.13 still has it."
+    },
+    {
+     "user_claim_id": "U2",
+     "assessment": "partly",
+     "verified_with_tool": true,
+     "evidence": "GIL build: Pillow pipeline 4.74x on 8 threads, pure-Python 0.95x",
+     "why": "As a general claim it's false: pure-Python CPU work doesn't scale on the default build. For C code that releases the GIL, such as Pillow's resize, threads already scale, but that has nothing to do with GIL removal."
+    },
+    {
+     "user_claim_id": "U3",
+     "assessment": "unknown",
+     "verified_with_tool": false,
+     "evidence": null,
+     "why": "Threads remove per-process baseline memory, but image buffers stay, and thread arenas can add memory. The net result depends on the unmeasured RSS breakdown."
+    },
+    {
+     "user_claim_id": "U4",
+     "assessment": "unknown",
+     "verified_with_tool": false,
+     "evidence": null,
+     "why": "No code was provided. It is plausible and taken as given."
+    }
+   ],
+   "reading_answered": "R1",
+   "reading_divergence": null,
+   "premortem": "They switched to threads, and throughput held, but RSS barely dropped. Decoded image buffers were most of the memory, and glibc per-thread arenas grew. Meanwhile a slow leak or native segfault, previously contained by maxtasksperchild and process isolation, now took down the whole worker.",
+   "opposite_is_right_if": "Two things would each flip a part of this. First, if the pipeline spends most of its time in pure Python, or uses a library that holds the GIL, threads on the standard build will collapse throughput and O3 is clearly right. Second, if per-process baseline dominates RSS (many workers, small images) and the library releases the GIL, then a plain ThreadPoolExecutor swap (close to O1) captures most of the gain with little risk."
+  },
+  {
+   "seat": "practitioner",
+   "model": "sonnet",
+   "family": "anthropic",
+   "trusted": true,
+   "position": "O3: Keep process-based workers but reduce their memory footprint (e.g. fewer workers, maxtasksperchild, a different start method, shared memory, streaming or chunked inputs)",
+   "stance": "recommend_with_changes",
+   "confidence": "medium",
+   "answer": "O3 is the right move now \u2014 this is likely not what a \"GIL is gone, just thread it\" proponent wants to hear, but that's the honest read. U1 is false: standard Python 3.13 keeps the GIL; free-threading is opt-in (python3.13t / --disable-gil), marked experimental, with a real single-threaded perf cost (docs.python.org, verified). Library support is partial: Pillow 11+/NumPy 2.1+ have free-threaded nightly wheels, OpenCV does not yet (py-free-threading.github.io/tracking, verified). So O1 (thread now, no gating) risks a throughput cliff or the GIL silently re-enabling if any C-extension dependency isn't no-GIL-safe \u2014 wrong given the stated goal of keeping throughput/reliability under unknowns. O2 is the technically-correct gated version of the threading idea, but migrating prod to an experimental interpreter build to fix a memory problem is disproportionate effort/risk right now \u2014 worth tracking as 3.14/PEP 779 matures, not doing this week. O3 (smaller pool, maxtasksperchild, fork start method, shared-memory or chunked image buffers) is the smallest reversible step: no dependency on unresolved unknowns, keeps process-isolation reliability (native codec crashes stay contained), and is measurable Monday. First step: run sys._is_gil_enabled()/Py_GIL_DISABLED check in prod, then profile whether RSS is worker-count-driven or image-buffer-driven before picking a knob.",
+   "conditions": [
+    {
+     "text": "Before any threading change: confirm in prod whether the build is free-threaded (python -c \"import sys,sysconfig;print(sys.version);print(sysconfig.get_config_var('Py_GIL_DISABLED'));print(getattr(sys,'_is_gil_enabled',lambda:'n/a')())\")",
+     "severity": "blocking"
+    },
+    {
+     "text": "Identify the imaging library and verify its resize/decode path either releases the GIL (fine on standard build, e.g. confirmed for Pillow's resample loop) or has a free-threaded wheel (needed for real thread parallelism otherwise)",
+     "severity": "blocking"
+    },
+    {
+     "text": "Take a memory breakdown (per-worker RSS via psutil/time -v) before choosing between fewer workers, maxtasksperchild, fork vs spawn, or streaming/chunked image buffers \u2014 the dominant driver determines which knob actually helps",
+     "severity": "do_alongside"
+    },
+    {
+     "text": "If pursuing O2 later, audit every C-extension dependency (not just the imaging library) against py-free-threading.github.io/tracking, since one incompatible extension can re-enable the GIL silently",
+     "severity": "do_alongside"
+    },
+    {
+     "text": "Benchmark any candidate change (Pool vs ThreadPoolExecutor vs tuned Pool) on the real workload/image sizes before rollout, not just in isolation",
+     "severity": "minor"
+    }
+   ],
+   "claims": [
+    {
+     "id": "C1",
+     "text": "Standard Python 3.13 does not remove the GIL; free-threading is an opt-in experimental build (./configure --disable-gil or python3.13t), with a documented substantial single-threaded performance hit",
+     "load_bearing": true,
+     "status": "verified_tool",
+     "evidence": "WebFetch of docs.python.org/3.13/whatsnew/3.13.html#free-threaded-cpython"
+    },
+    {
+     "id": "C2",
+     "text": "An incompatible C extension causes the free-threaded build to automatically re-enable the GIL unless explicitly forced off, i.e. no-GIL benefits are not guaranteed just by using a 3.13t/3.14t interpreter",
+     "load_bearing": true,
+     "status": "verified_tool",
+     "evidence": "Same docs.python.org fetch: Py_mod_gil slot / PyUnstable_Module_SetGIL fallback behavior"
+    },
+    {
+     "id": "C3",
+     "text": "Pillow's resize/resample C code (Resample.c) brackets its compute-heavy loops with ImagingSectionEnter/Leave, releasing the GIL during that portion",
+     "load_bearing": true,
+     "status": "verified_tool",
+     "evidence": "WebFetch of raw.githubusercontent.com/python-pillow/Pillow/main/src/libImaging/Resample.c, confirmed ImagingSectionEnter/Leave around all six resample loop variants"
+    },
+    {
+     "id": "C4",
+     "text": "Free-threading library ecosystem support is partial as of the check: Pillow 11.0+ and NumPy 2.1+ have free-threaded (nightly) wheels; OpenCV (opencv-python) does not yet have a stable free-threaded release",
+     "load_bearing": true,
+     "status": "verified_tool",
+     "evidence": "WebFetch of py-free-threading.github.io/tracking/"
+    },
+    {
+     "id": "C5",
+     "text": "multiprocessing.Pool memory footprint can be reduced independent of the concurrency model: fork start method gets copy-on-write sharing of already-loaded library memory, maxtasksperchild bounds per-worker native-allocator growth/fragmentation, and reducing worker count trades throughput headroom for lower footprint",
+     "load_bearing": true,
+     "status": "from_memory",
+     "evidence": "Standard, well-documented CPython/multiprocessing behavior; not independently fetched this session"
+    },
+    {
+     "id": "C6",
+     "text": "A thread pool's memory advantage over a process pool comes from sharing one heap (no N duplicate interpreters/imported-module/native-buffer copies), which is real but only realized if the workload can actually run in threads without a throughput or correctness regression",
+     "load_bearing": true,
+     "status": "inference",
+     "evidence": "Derived from C1\u2013C4: benefit is conditional on GIL status and per-library GIL-release behavior, not automatic"
+    }
+   ],
+   "user_claim_assessments": [
+    {
+     "user_claim_id": "U1",
+     "assessment": "false",
+     "verified_with_tool": true,
+     "why": "Standard Python 3.13 keeps the GIL; removal only happens in the opt-in, experimental free-threaded build (python3.13t), confirmed via docs.python.org."
+    },
+    {
+     "user_claim_id": "U2",
+     "assessment": "partly",
+     "verified_with_tool": true,
+     "why": "As a blanket claim it's false \u2014 CPU-bound Python-level work still serializes on standard 3.13. There is a real nuance though: libraries like Pillow already release the GIL around their heaviest C loops (verified in Resample.c), so threads can already get partial real parallelism for the resize step specifically, on any build, independent of PEP 703 \u2014 but this doesn't generalize to 'threading is now fine for CPU-bound work' as stated."
+    },
+    {
+     "user_claim_id": "U3",
+     "assessment": "partly",
+     "verified_with_tool": false,
+     "why": "Directionally plausible (one shared heap vs N process copies typically does lower baseline memory) but the magnitude and whether it actually manifests depends on unmeasured facts (image buffer sizes vs interpreter overhead, GC/allocator behavior), so it's an untested prediction, not a verified result."
+    },
+    {
+     "user_claim_id": "U4",
+     "assessment": "unknown",
+     "verified_with_tool": false,
+     "why": "Taken as the given premise of the task; no application code was available in this session's working directory to inspect, so it is accepted as stated rather than independently confirmed."
+    }
+   ],
+   "reading_answered": "R1",
+   "reading_divergence": null,
+   "premortem": "The team tuned the process pool (fewer workers, maxtasksperchild) but never measured where memory actually went; it turned out RSS was dominated by peak image buffers (large-format inputs fully decoded into memory) rather than interpreter/worker-count overhead, so the \"safe\" process-tuning knobs barely moved memory, and six months later the team is still fighting OOMs \u2014 because they picked a plausible-sounding fix instead of profiling the actual memory breakdown first.",
+   "opposite_is_right_if": "Production is confirmed already running a free-threaded CPython build (sys._is_gil_enabled() == False), the imaging library and every other C-extension dependency are confirmed no-GIL-safe, and a real benchmark on the production workload shows ThreadPoolExecutor matches or beats Pool on both memory and throughput \u2014 in that case O1 (or the already-completed O2) is simply correct and further process-pool tuning is unnecessary work."
+  },
+  {
+   "seat": "outsider",
+   "model": "opus",
+   "family": "anthropic",
+   "trusted": true,
+   "position": "O3: Keep process-based workers but reduce their memory footprint (e.g. fewer workers, maxtasksperchild, a different start method, shared memory, streaming or chunked inputs)",
+   "stance": "recommend_with_changes",
+   "confidence": "medium",
+   "answer": "Do O3 first: keep process workers and shrink them, then measure a thread pool as a separate trial. Don't switch blindly (O1).\n\nThe premise is wrong. Standard CPython 3.13 still has the GIL. The GIL-free build is a separate, optional one (python3.13t). Even there, importing a C extension that isn't marked as free-threading-safe turns the GIL back on.\n\nWhat an outside expert would notice is that the GIL question may not matter much here. Pillow's resize releases the GIL. In my test on normal 3.13.3 with 8 CPUs and 32 LANCZOS resizes, threads took 0.43s against 0.67s for processes and 1.81s serially. A pure-Python loop got no faster with threads (3.71s against 1.40s for processes). So threads help only if nearly all the time is spent inside the C library.\n\nMemory: threads save the per-process interpreter and import overhead, roughly tens of MB per worker. They do not save image buffers, which are often the bulk: for example 8 \u00d7 a 24MP RGB image \u2248 576MB. You also lose two things: crash isolation (a segfault in native code kills the whole service) and maxtasksperchild leak recycling.\n\nNow:\n1. Measure per-worker RSS against buffer memory.\n2. Size the pool to the cores you have.\n3. Set maxtasksperchild.\n4. Stream or chunk inputs and use Pillow's draft()/reduce for JPEGs.\n5. Check the start method.\n\nThen run a benchmark with a thread pool on your current build. If that profile shows ov",
+   "conditions": [
+    {
+     "text": "Measure before changing anything. Record per-worker RSS (PSS/USS), peak image-buffer memory, pool size and image sizes. If buffers dominate, switching the concurrency model saves little.",
+     "severity": "blocking"
+    },
+    {
+     "text": "If you trial threads, profile the share of CPU time spent in GIL-releasing C (decode, resize, encode) against Python-level code. Accept threads only if throughput holds under a production-like load.",
+     "severity": "do_alongside"
+    },
+    {
+     "text": "If you move to a free-threaded build, check sys._is_gil_enabled() after every import in production. Confirm that the imaging library and every C extension ship cp313t/cp314t wheels.",
+     "severity": "blocking"
+    },
+    {
+     "text": "Losing process isolation means a native crash takes down the whole service, and a leak can no longer be recycled with maxtasksperchild. Add a supervisor or restart policy, and put a limit on concurrent images.",
+     "severity": "do_alongside"
+    },
+    {
+     "text": "Check the start method. Python 3.14 changed the default on Linux from fork to forkserver, which changes per-worker memory compared with forked copy-on-write.",
+     "severity": "minor"
+    }
+   ],
+   "claims": [
+    {
+     "id": "C1",
+     "text": "The standard CPython 3.13 and 3.14 builds still have the GIL enabled. Free-threading is a separate, optional build.",
+     "load_bearing": true,
+     "status": "verified_tool",
+     "evidence": "Local check: python3.13 3.13.3 and python3.14 3.14.7 both report Py_GIL_DISABLED=0 and sys._is_gil_enabled()=True. docs.python.org/3/howto/free-threading-python.html describes free-threading as an optionally installed build."
+    },
+    {
+     "id": "C2",
+     "text": "On the free-threaded build, importing a C extension that is not marked as supporting free-threading re-enables the GIL, with a warning.",
+     "load_bearing": true,
+     "status": "verified_tool",
+     "evidence": "docs.python.org free-threading howto: 'The GIL may also automatically be enabled when importing a C-API extension module that is not explicitly marked as supporting free threading.'"
+    },
+    {
+     "id": "C3",
+     "text": "Pillow's resize releases the GIL, so a ThreadPoolExecutor scales for resize-heavy work even on the standard GIL build. Pure-Python work does not scale with threads.",
+     "load_bearing": true,
+     "status": "verified_tool",
+     "evidence": "Scratch benchmark bench.py on Pillow 11.3.0, Python 3.13.3, 8 CPUs, 32 jobs of a 3000x2000 to 800x533 LANCZOS resize: serial 1.81s, threads 0.43s, Pool 0.67s. Pure-Python loop: serial 3.16s, threads 3.71s, Pool 1.40s."
+    },
+    {
+     "id": "C4",
+     "text": "The free-threaded build typically uses more memory per object than the default build, and it has about 1\u20138% single-threaded overhead.",
+     "load_bearing": false,
+     "status": "verified_tool",
+     "evidence": "docs.python.org free-threading howto, memory section and pyperformance overhead of '1% on macOS aarch64 to 8% on x86-64 Linux'."
+    },
+    {
+     "id": "C5",
+     "text": "Switching to threads saves the per-process interpreter overhead (tens of MB per worker) but not the concurrent image buffers. It also removes crash isolation and maxtasksperchild leak containment.",
+     "load_bearing": true,
+     "status": "inference",
+     "evidence": "From general process and thread memory models. Nothing about this specific workload was measured."
+    },
+    {
+     "id": "C6",
+     "text": "Pillow has shipped experimental free-threaded wheels since roughly version 11.0.",
+     "load_bearing": false,
+     "status": "from_memory",
+     "evidence": "The Pillow platform-support page I fetched did not mention it. This is not verified."
+    },
+    {
+     "id": "C7",
+     "text": "Python 3.14 changed the default multiprocessing start method on Linux from fork to forkserver.",
+     "load_bearing": false,
+     "status": "from_memory",
+     "evidence": "Recalled from the 3.14 What's New notes. Not fetched."
+    }
+   ],
+   "user_claim_assessments": [
+    {
+     "user_claim_id": "U1",
+     "assessment": "false",
+     "verified_with_tool": true,
+     "evidence": "Local 3.13.3: sys._is_gil_enabled() is True. The docs describe free-threading as an optional separate build.",
+     "why": "The GIL can be disabled only in the optional free-threaded build (3.13t), which the docs called experimental in 3.13. The default build still has it, and even in 3.13t importing an unmarked C extension turns it back on."
+    },
+    {
+     "user_claim_id": "U2",
+     "assessment": "partly",
+     "verified_with_tool": true,
+     "evidence": "Benchmark: threads did not speed up pure-Python work on the GIL build, but did speed up Pillow resize.",
+     "why": "This is true for CPU-bound Python code only on a free-threaded build with every extension compatible. For C code that releases the GIL, such as the resize itself, threads already worked before 3.13. The reason the asker gives is wrong."
+    },
+    {
+     "user_claim_id": "U3",
+     "assessment": "partly",
+     "verified_with_tool": false,
+     "evidence": null,
+     "why": "Threads do remove the per-process interpreter and import overhead. If image buffers or per-worker caches dominate, the saving is small. The free-threaded build also uses more memory per object. Without a memory breakdown, the size of the saving is unknown."
+    },
+    {
+     "user_claim_id": "U4",
+     "assessment": "unknown",
+     "verified_with_tool": false,
+     "evidence": null,
+     "why": "No code was provided. I accepted it as the premise."
+    }
+   ],
+   "reading_answered": "R1",
+   "reading_divergence": "The premise is mostly wrong, but not in the way people expect. The GIL is not gone in standard 3.13. Even so, image resizing in Pillow, and probably in OpenCV and pyvips, runs in C code that releases the GIL. That means threads can already scale on the normal build. So the real question is where the CPU time goes and what memory the pool actually uses, not whether the GIL still exists.",
+   "premortem": "They made the small tuning changes to the process pool (O3), but memory barely dropped. It turned out peak use came from decoding large full-resolution images at the same time, not from the pool's own overhead. The team never measured that breakdown, so they spent their effort on the wrong lever.",
+   "opposite_is_right_if": "Profiling shows each worker process uses a lot of memory in imports, models or caches, compared with the image buffers. Also, more than 90% of the CPU time is in GIL-releasing C decode, resize and encode, and the native code is stable. In that case a thread pool (O1, or O2 on a verified free-threaded build) lowers memory and keeps throughput, and it is the better choice."
+  }
+ ],
+ "verification": [
+  {
+   "id": "V1",
+   "claim_ref": "U1",
+   "claim_text": "The asker states that the GIL is gone in Python 3.13.",
+   "kind": "user_claim",
+   "verdict": "partly",
+   "corrected_claim": "In Python 3.13, the GIL is not gone by default. CPython 3.13 adds an experimental free-threaded build (PEP 703) that CAN run with the GIL disabled, but this requires a separate executable (python3.13t) or explicit opt-in; the standard python3.13 build still has the GIL enabled.",
+   "evidence": [
+    {
+     "kind": "url",
+     "ref": "https://docs.python.org/3.13/whatsnew/3.13.html",
+     "excerpt": "CPython now has experimental support for running in a free-threaded mode, with the global interpreter lock (GIL) disabled. This is an experimental feature and therefore is not enabled by default. The free-threaded mode requires a different executable, usually called python3.13t or python3.13t.exe."
+    }
+   ],
+   "scope_limits": [
+    "Verified against the official CPython 3.13 'What's New' documentation via web fetch (quoted above); did not independently build or run python3.13t to confirm runtime behavior, and did not check the repository referenced in this workflow (none was provided/relevant to this Python-version claim). No local Python 3.13 installation was inspected in this environment."
+   ],
+   "votes": [
+    "partly"
+   ]
+  },
+  {
+   "id": "V3",
+   "claim_ref": "U2",
+   "claim_text": "The asker states that, as a result, threading is now fine for CPU-bound work in Python.",
+   "kind": "user_claim",
+   "verdict": "partly",
+   "corrected_claim": "Threading has become usable for CPU-bound parallelism only in an opt-in, non-default CPython build: free-threaded CPython (PEP 703), which reached officially-supported (\"Phase II\") status with PEP 779 in Python 3.14. It is still not the default interpreter build (that is deferred to a future \"Phase III\" decision), it carries a measured ~5-10% single-threaded performance penalty and higher memory use, many third-party C-extension packages are not yet compatible and silently re-enable the GIL when used, and documented thread-safety caveats remain (e.g. shared iterators are not thread-safe, frame.f_locals access across threads can crash the interpreter). So it is not accurate to say threading is now unconditionally \"fine\" for CPU-bound work in Python generally \u2014 it depends on using the free-threaded build with free-threading-compatible dependencies.",
+   "evidence": [
+    {
+     "kind": "url",
+     "ref": "https://docs.python.org/3/whatsnew/3.14.html",
+     "excerpt": "PEP 779: Free-threaded Python is officially supported ... CPython's free-threaded mode (PEP 703)... has been significantly improved in Python 3.14... The performance penalty on single-threaded code in free-threaded mode is now roughly 5-10%, depending on the platform and C compiler used."
+    },
+    {
+     "kind": "url",
+     "ref": "https://peps.python.org/pep-0779/",
+     "excerpt": "Phase II would make the free-threaded build officially supported but still optional ... phase III would make the free-threaded build the default ... we can only get there if more of the Python ecosystem starts supporting free-threaded Python. We currently have enough packages and tools supporting PEP 703 that it's clear we're on the right path, but not enough to make the final decision."
+    },
+    {
+     "kind": "url",
+     "ref": "https://docs.python.org/3/howto/free-threading-python.html",
+     "excerpt": "Some third-party packages, in particular ones with an extension module, may not be ready for use in a free-threaded build, and will re-enable the GIL. ... It is generally not thread-safe to access the same iterator object from multiple threads concurrently, and threads may see duplicate or missing elements. ... The free-threaded build has additional overhead when executing Python code compared to the default GIL-enabled build... about 1% on macOS aarch64 to 8% on x86-64 Linux systems."
+    }
+   ],
+   "scope_limits": [
+    "I verified this against current official CPython documentation (What's New in 3.14, the free-threading HOWTO, and PEP 779) as of this run; I did not test actual multi-core CPU-bound threading benchmarks myself, nor check the compatibility status of any specific third-party library the original claim's context (U2) might have had in mind. I also did not have access to the original conversation/claim U2 to see what specific \"result\" (e.g., a particular PEP, release, or library change) it was attributing the improvement to, so I evaluated the general claim against the current state of CPython."
+   ],
+   "votes": [
+    "partly"
+   ]
+  },
+  {
+   "id": "V2",
+   "claim_ref": "U3",
+   "claim_text": "The asker predicts that replacing multiprocessing.Pool with ThreadPoolExecutor will cut memory usage.",
+   "kind": "user_claim",
+   "verdict": "true",
+   "corrected_claim": null,
+   "evidence": [
+    {
+     "kind": "file",
+     "ref": "/Users/munimahmad/Liftoff/claude-council-skill/evals/evals.json:21",
+     "excerpt": "\"...so I'm going to replace our multiprocessing.Pool image-resizing workers with a ThreadPoolExecutor to cut memory usage. Anything wrong with that plan?\""
+    },
+    {
+     "kind": "file",
+     "ref": "council-workspace/iteration-1/eval-3-factual-trap-in-premise/with_skill/outputs/council_result.json:97",
+     "excerpt": "\"id\": \"U3\", \"claim_third_person\": \"The asker predicts that replacing multiprocessing.Pool with ThreadPoolExecutor will reduce memory usage.\""
+    }
+   ],
+   "scope_limits": [
+    "Verified only that the asker's original prompt (in the eval fixture the council transcript is based on) literally states this prediction, and that the council's own claim-extraction (U3) matches it verbatim in substance. Did not evaluate whether the prediction itself is technically correct (i.e., whether ThreadPoolExecutor actually would cut memory usage) \u2014 that is a separate factual question the council transcript addresses elsewhere (it finds the premise about the GIL being gone in 3.13 is false), not what this claim asserts. The claim under review is only about what the asker predicted/said, not whether the prediction is true."
+   ],
+   "votes": [
+    "true"
+   ]
+  },
+  {
+   "id": "V4",
+   "claim_ref": "premise_auditor.C5",
+   "claim_text": "Threads save only per-process interpreter and import overhead. Decoded image buffers per in-flight task stay the same, so the memory saving depends on the RSS breakdown.",
+   "kind": "seat_claim",
+   "verdict": "true",
+   "corrected_claim": null,
+   "evidence": [
+    {
+     "kind": "command",
+     "ref": "python3 /private/tmp/.../scratchpad/rss_test.py (RSS measured via resource.getrusage(RUSAGE_SELF).ru_maxrss at each stage)",
+     "excerpt": "baseline interpreter RSS: 14.5 MB\nafter import numpy+PIL RSS: 30.4 MB\nafter decoding buffer 1/8 RSS: 69.8 MB  (buffer size=34.3 MB)\nafter decoding buffer 8/8 RSS: 310.3 MB  (buffer size=34.3 MB)"
+    },
+    {
+     "kind": "command",
+     "ref": "python3 -c \"import multiprocessing as mp; print(mp.get_start_method())\"",
+     "excerpt": "spawn"
+    },
+    {
+     "kind": "command",
+     "ref": "grep for repo context (claude-council-skill has no image-pipeline code; claim is generic, not repo-specific)",
+     "excerpt": "grep -rln 'premise_auditor|RSS|decoded image|in-flight|per-process' . -> council/workflows/council.js, tests/simulate.mjs (only contain the string 'premise_auditor' as a council seat id, no image/RSS content)"
+    }
+   ],
+   "scope_limits": [
+    "This repo (claude-council-skill) contains no image-processing/threading code the claim could be checked against directly \u2014 the claim is a generic Python concurrency/memory claim, so I verified it with a standalone scratch measurement instead of repo evidence. I measured fixed per-process overhead (interpreter + numpy/PIL import \u2248 30MB) versus per-decoded-buffer cost (\u224834MB per in-flight 3000x4000 RGB image) within a single process, and confirmed macOS's default multiprocessing start method is 'spawn' (each worker process re-imports and pays interpreter/import cost separately, per Python's own multiprocessing.get_start_method() output). I did not run an actual side-by-side ProcessPoolExecutor vs ThreadPoolExecutor benchmark measuring real cross-process RSS with a live OS process table (that would require spawning multiple processes, which stays read-only-safe but I limited scope to a single-process proxy test); I also did not examine any specific application's actual RSS breakdown, since none was referenced in this repo \u2014 the claim's truth for a concrete system still depends on that system's real interpreter-overhead-to-buffer-size ratio, exactly as the claim states."
+   ],
+   "votes": [
+    "true"
+   ]
+  },
+  {
+   "id": "V5",
+   "claim_ref": "practitioner.C6",
+   "claim_text": "A thread pool's memory advantage over a process pool comes from sharing one heap (no N duplicate interpreters/imported-module/native-buffer copies), which is real but only realized if the workload can actually run in threads without a throughput or correctness regression",
+   "kind": "seat_claim",
+   "verdict": "true",
+   "corrected_claim": null,
+   "evidence": [
+    {
+     "kind": "command",
+     "ref": "python3 mem_test2.py (Python 3.13.3, ProcessPoolExecutor(8) vs ThreadPoolExecutor(8), each worker sleeps 0.5s to force concurrent execution)",
+     "excerpt": "ProcessPoolExecutor: unique pids: {88726, 88727, 88728, 88729, 88730, 88731, 88732, 88733} count= 8 ; pid=88726 rss_bytes=22708224 ... pid=88733 rss_bytes=22937600 (8 separate ~22-23MB interpreter processes)\nThreadPoolExecutor: unique pids: {88724} count= 1 (all 8 workers ran inside one process, i.e. one heap)"
+    },
+    {
+     "kind": "command",
+     "ref": "python3 cpu_test.py (pure-Python CPU-bound loop, 8x20M-iteration sum, Python 3.13.3 standard/GIL build)",
+     "excerpt": "serial: 6.867057 ; threads: 9.930838 ; processes: 3.364563 (threads were slower than even serial execution; processes gave ~2x speedup)"
+    },
+    {
+     "kind": "command",
+     "ref": "python3 -c \"import sys; print(sys._is_gil_enabled())\"",
+     "excerpt": "True (confirms this is a standard, GIL-enabled CPython 3.13.3 build, not a free-threaded 3.13t build)"
+    }
+   ],
+   "scope_limits": [
+    "Verified only on the locally installed Python 3.13.3 (standard, GIL-enabled) build on macOS; did not test a free-threaded (3.13t/3.14t) build, where the memory picture (heap sharing still applies, but throughput for CPU-bound pure-Python work would differ) would be different. Did not independently test the \"correctness regression\" half of the claim (thread-safety/race conditions from shared mutable state) with a scratch test \u2014 that follows directly and uncontroversially from the shared-heap fact just measured (shared heap \u21d2 shared mutable objects \u21d2 needs synchronization, unlike isolated per-process memory) rather than from a separate empirical run. No repo file in claude-council-skill actually contains a citation labeled \"practitioner.C6\" \u2014 that citation inside the claim is itself unverified/unfound and is treated only as a label, not as evidence."
+   ],
+   "votes": [
+    "true"
+   ]
+  }
+ ],
+ "process": {
+  "ran": [
+   {
+    "name": "premise_audit",
+    "reason": "3 load-bearing checkable claim(s) from the asker"
+   },
+   {
+    "name": "extra_seats",
+    "reason": "tally O1: Replace multiprocessing.Pool with concurrent.futures.ThreadPoolExecutor on the existing interpreter, with no other changes = 1; Measure first, and don't wait for a free-threaded build. If the resize library releases the GIL (Pillow does), move to a bounded ThreadPoolExecutor on the current standard build, alongside O3-style memory levers (draft/reduced decode, a cap on in-flight images). If most of the time is spent in Pytho = 1; O3: Keep process-based workers but reduce their memory footprint (e.g. fewer workers, maxtasksperchild, a different start method, shared memory, streaming or chunked inputs) = 1 (n=3); 0 low-confidence ballot(s)"
+   },
+   {
+    "name": "verify",
+    "reason": "2 claim(s) the decision turns on: premise_auditor.C5, practitioner.C6"
+   },
+   {
+    "name": "critique",
+    "reason": "split O1: Replace multiprocessing.Pool with concurrent.futures.ThreadPoolExecutor on the existing interpreter, with no other changes = 1; Measure first, and don't wait for a free-threaded build. If the resize library releases the GIL (Pillow does), move to a bounded ThreadPoolExecutor on the current standard build, alongside O3-style memory levers (draft/reduced decode, a cap on in-flight images). If most of the time is spent in Pytho = 1; O3: Keep process-based workers but reduce their memory footprint (e.g. fewer workers, maxtasksperchild, a different start method, shared memory, streaming or chunked inputs) = 2 (n=4) persists after verification (round 1)"
+   },
+   {
+    "name": "dissent_lead",
+    "reason": "split O1: Replace multiprocessing.Pool with concurrent.futures.ThreadPoolExecutor on the existing interpreter, with no other changes = 1; Measure first, and don't wait for a free-threaded build. If the resize library releases the GIL (Pillow does), move to a bounded ThreadPoolExecutor on the current standard build, alongside O3-style memory levers (draft/reduced decode, a cap on in-flight images). If most of the time is spent in Pytho = 1; O3: Keep process-based workers but reduce their memory footprint (e.g. fewer workers, maxtasksperchild, a different start method, shared memory, streaming or chunked inputs) = 2 (n=4); first_principles dissents"
+   },
+   {
+    "name": "audit",
+    "reason": "verdict disagrees with the asker (partly_right) or overrides the majority"
+   }
+  ],
+  "skipped": [
+   {
+    "name": "verify_overflow",
+    "why_skipped": "standard mode cap of 5 verified claims",
+    "dropped": [
+     "first_principles.C6",
+     "practitioner.C5"
+    ]
+   }
+  ],
+  "roster": [
+   {
+    "label": "reader-outsider",
+    "role": "reader",
+    "requested": "sonnet",
+    "used": "sonnet",
+    "fell_back": false
+   },
+   {
+    "label": "framer",
+    "role": "framer",
+    "requested": "opus",
+    "used": "opus",
+    "fell_back": false
+   },
+   {
+    "label": "reading-reconciler",
+    "role": "mechanical",
+    "requested": "sonnet",
+    "used": "sonnet",
+    "fell_back": false
+   },
+   {
+    "label": "verify-U1",
+    "role": "verifier",
+    "requested": "sonnet",
+    "used": "sonnet",
+    "fell_back": false
+   },
+   {
+    "label": "verify-U3",
+    "role": "verifier",
+    "requested": "sonnet",
+    "used": "sonnet",
+    "fell_back": false
+   },
+   {
+    "label": "verify-U2",
+    "role": "verifier",
+    "requested": "sonnet",
+    "used": "sonnet",
+    "fell_back": false
+   },
+   {
+    "label": "seat-premise_auditor",
+    "role": "voter",
+    "requested": "opus",
+    "used": "opus",
+    "fell_back": false
+   },
+   {
+    "label": "seat-practitioner",
+    "role": "voter",
+    "requested": "sonnet",
+    "used": "sonnet",
+    "fell_back": false
+   },
+   {
+    "label": "seat-first_principles",
+    "role": "voter",
+    "requested": "fable",
+    "used": "fable",
+    "fell_back": false
+   },
+   {
+    "label": "alt-clusterer",
+    "role": "mechanical",
+    "requested": "sonnet",
+    "used": "sonnet",
+    "fell_back": false
+   },
+   {
+    "label": "seat-outsider",
+    "role": "voter",
+    "requested": "opus",
+    "used": "opus",
+    "fell_back": false
+   },
+   {
+    "label": "alt-clusterer",
+    "role": "mechanical",
+    "requested": "sonnet",
+    "used": "sonnet",
+    "fell_back": false
+   },
+   {
+    "label": "crux-dedupe",
+    "role": "mechanical",
+    "requested": "sonnet",
+    "used": "sonnet",
+    "fell_back": false
+   },
+   {
+    "label": "verify-premise_auditor.C5",
+    "role": "verifier",
+    "requested": "sonnet",
+    "used": "sonnet",
+    "fell_back": false
+   },
+   {
+    "label": "verify-practitioner.C6",
+    "role": "verifier",
+    "requested": "sonnet",
+    "used": "sonnet",
+    "fell_back": false
+   },
+   {
+    "label": "critique-premise_auditor-r1",
+    "role": "critic",
+    "requested": "opus",
+    "used": "opus",
+    "fell_back": false
+   },
+   {
+    "label": "critique-outsider-r1",
+    "role": "critic",
+    "requested": "opus",
+    "used": "opus",
+    "fell_back": false
+   },
+   {
+    "label": "critique-first_principles-r1",
+    "role": "critic",
+    "requested": "fable",
+    "used": "fable",
+    "fell_back": false
+   },
+   {
+    "label": "critique-practitioner-r1",
+    "role": "critic",
+    "requested": "sonnet",
+    "used": "sonnet",
+    "fell_back": false
+   },
+   {
+    "label": "alt-clusterer",
+    "role": "mechanical",
+    "requested": "sonnet",
+    "used": "sonnet",
+    "fell_back": false
+   },
+   {
+    "label": "dissent-first_principles",
+    "role": "dissent",
+    "requested": "fable",
+    "used": "fable",
+    "fell_back": false
+   },
+   {
+    "label": "chair",
+    "role": "chair",
+    "requested": "opus",
+    "used": "opus",
+    "fell_back": false
+   },
+   {
+    "label": "audit",
+    "role": "auditor",
+    "requested": "sonnet",
+    "used": "sonnet",
+    "fell_back": false
+   },
+   {
+    "label": "chair-audit-repair",
+    "role": "chair",
+    "requested": "opus",
+    "used": "opus",
+    "fell_back": false
+   }
+  ],
+  "notes": [],
+  "diversity": {
+   "families": [
+    "anthropic"
+   ],
+   "degraded": true,
+   "note": "All voting seats were Claude models, so their agreement is one model family's view."
+  },
+  "outside": {
+   "requested": []
+  },
+  "agents_run": 24,
+  "tokens_this_turn": 1337721
+ },
+ "report_markdown": "**Council verdict: Partly.** Keep process-based workers and shrink their memory first (O3), picking the lever from a measured memory breakdown. Standard Python 3.13 still has the GIL, and a thread pool is at most a later, benchmark-gated trial.\nConfidence: **low**. The confidence ceiling is low. The facts that decide between O3 and a gated thread pool are all unknown: the imaging library (which also decides free-threaded wheel availability, since Pillow/NumPy have wheels and OpenCV does not), the production build and GIL state, and the RSS split between interpreter baseline and image buffers. The tally is split 2-1-1, and the dissenting seats bring measured Pillow benchmarks that favour threads. The verification records firmly support the premise corrections, but they don't show which memory lever will pay off.\n\n**What you asked:** Whether replacing a multiprocessing.Pool of CPU-bound image-resizing workers with a ThreadPoolExecutor on Python 3.13 is sound, and what problems the change could cause, given the premise that removal of the GIL makes threading suitable for CPU-bound work. \u2192 **what you're after:** Lower the memory footprint of the image-resizing worker pool without losing throughput, correctness or stability in production.\n_Reading check:_ The premise is mostly wrong, but not in the way people expect. The GIL is not gone in standard 3.13. Even so, image resizing in Pillow, and probably in OpenCV and pyvips, runs in C code that releases \n\n**Recommendation:** O3: Keep process-based workers but reduce their memory footprint (e.g. fewer workers, maxtasksperchild, a different start method, shared memory, streaming or chunked inputs)\n\n### Answer\nKeep the process workers and shrink them first (O3), choosing the lever from a measured memory breakdown. The premise is wrong: standard CPython 3.13 still has the GIL. Free-threading is an opt-in build (python3.13t), and importing a C extension that isn't marked compatible turns the GIL back on (V1, V3). Library support is partial. Pillow 11.0+ and NumPy 2.1+ ship free-threaded wheels, but OpenCV has no stable free-threaded release (tracker check by one seat). So whether a free-threaded build can work depends on the library.\n\nStep 1: in production, run sys.version, sysconfig.get_config_var('Py_GIL_DISABLED') and sys._is_gil_enabled(), and identify the imaging library. Record per-worker RSS/PSS against peak decoded-buffer memory, plus pool size, image sizes and start method. In V4, an interpreter with numpy and PIL loaded used about 30 MB, and one decoded large image took about 34 MB, so image buffers can dominate.\n\nStep 2: apply O3 levers that don't cost throughput:\n- pool size equal to the core count\n- maxtasksperchild\n- fork/forkserver preload where it is safe\n- reduced-size decode (draft/reduce)\n- a cap on in-flight images\n\nDon't cut workers below the core count.\n\nStep 3, only if per-process baseline dominates and the library releases the GIL (Pillow does): benchmark a bounded ThreadPoolExecutor on the current standard build against the Pool, using production images. Adopt it only if throughput holds, and add a supervisor/restart policy and a bounded queue. Any Python-level stage makes threads lose; in V5, threads were slower than serial.\n\nDon't do O1 as stated, don't migrate to a free-threaded build (O2), and don't pick O4.\n\n### Why\n- U1's premise fails. The default 3.13 build keeps the GIL, and free-threading is opt-in and can be turned off again by incompatible extensions (V1, V3). On top of that, ecosystem support is partial: Pillow and NumPy ship free-threaded wheels, OpenCV has no stable free-threaded release (B.C4). So 'threads are now fine for CPU work' holds only on a build nobody has confirmed is in production, and only with some libraries.\n- A thread pool saves only the duplicated interpreter and import overhead. Per-task image buffers stay the same (V4, V5). Whether the swap is worth it depends on an RSS breakdown nobody has measured, and O3 is the step that stays safe without that fact.\n- With the imaging library unspecified, threads can make throughput collapse when any stage holds the GIL. V5 measured pure-Python work at 9.9s on threads against 6.9s serial and 3.4s on processes. That directly threatens the 'keep throughput' requirement.\n- Process workers keep crash isolation and maxtasksperchild leak recycling, and all four seats named losing these as the main reliability risk of switching to threads.\n\n### Your premises, checked\n| Claim | Verdict | Evidence |\n|---|---|---|\n| The asker states that the GIL is gone in Python 3.13. | \u25d0 partly | Accurate version: In Python 3.13, the GIL is not gone by default. CPython 3.13 adds an experimental free-threaded build (PEP 703) that CAN run with the GIL disabled, but this requires a separate executable (python3.13t) or explicit opt-in; the standard python3 |\n| The asker states that, as a result, threading is now fine for CPU-bound work in Python. | \u25d0 partly | Accurate version: Threading has become usable for CPU-bound parallelism only in an opt-in, non-default CPython build: free-threaded CPython (PEP 703), which reached officially-supported (\"Phase II\") status with PEP 779 in Python 3.14. It is still not the defau |\n| The asker predicts that replacing multiprocessing.Pool with ThreadPoolExecutor will cut memory usage. | \u2705 holds | /Users/munimahmad/Liftoff/claude-council-skill/evals/evals.json:21: \"...so I'm going to replace our multiprocessing.Pool image-resizing workers with a ThreadPoolExecutor to cut memory usage. Anything wrong wi / council-workspace/iteration-1/eval-3-factual-trap |\n| The asker states that the current image-resizing workers use multiprocessing.Pool. | ? unknown | not checked |\n\n### Do these first\n- **blocking** (verified, V4): Before choosing any lever, measure per-worker RSS/PSS against peak decoded-buffer memory, pool size and image dimensions. If buffers dominate, fix decoding (draft/reduce) and cap in-flight images; the executor type matters little.\n- **blocking** (verified, V1): Before any change that relies on threads, confirm the production build and GIL state (Py_GIL_DISABLED, and sys._is_gil_enabled() after all imports). Do not assume the GIL is off.\n- **do alongside** (seat consensus): If O2 is ever considered, check the imaging library and every C extension against the py-free-threading tracker first. Pillow 11.0+ and NumPy 2.1+ have free-threaded wheels, but opencv-python has no stable free-threaded release, so an OpenCV pipeline cannot run GIL-free today.\n- **do alongside** (verified, V5): If you trial a thread pool, benchmark the full decode/resize/encode path on production images against the Pool. Any Python-level stage runs one thread at a time under the GIL and can make threads slower than serial.\n- **do alongside** (seat consensus): Moving to threads removes crash isolation and maxtasksperchild. Add a supervisor/restart policy, a bounded submission queue, and MAX_IMAGE_PIXELS or dimension validation. Do not cut workers below the core count as a memory lever.\n- **minor** (seat consensus): Python 3.14 changed the POSIX default start method from fork to forkserver, and macOS defaults to spawn. That removes copy-on-write sharing, so per-child memory can rise after an upgrade. Set the start method explicitly.\n\n### Corrections to the premises\n- U1: The GIL is not gone in Python 3.13. The default build keeps it. The experimental free-threaded build (python3.13t, PEP 703) is a separate executable, and importing a C extension that isn't marked as supporting free-threading turns the GIL back on. In 3.14 (PEP 779) the build is officially supported but still optional and not the default. Library support is partial: Pillow 11.0+ and NumPy 2.1+ have free-threaded wheels, OpenCV does not yet have a stable one. (V1)\n- U2: Threads run CPU-bound Python code in parallel only on the opt-in free-threaded build. On the standard build, threads speed up CPU work only when it runs in C code that releases the GIL (Pillow's resize does). Pure-Python CPU work gets no speedup and can run slower than serial. (V3)\n- U3: Only partly true. A thread pool removes the N-1 duplicated interpreters and imported modules, but not the decoded image buffers held by each in-flight task. Those can dominate RSS, so the saving depends on a breakdown that hasn't been measured. (V4)\n\n### Where you and the council disagree\nYou said: \"since the GIL is gone in Python 3.13, threading is now fine for CPU-bound work, so I'm going to replace our multiprocessing.Pool image-resizing workers with a ThreadPoolExecutor to cut memory usage\"\nCouncil recommends: O3: Keep process-based workers but reduce their memory footprint (e.g. fewer workers, maxtasksperchild, a different start method, shared memory, streaming or chunked inputs)\nWhy: U1's premise fails. The default 3.13 build keeps the GIL, and free-threading is opt-in and can be turned off again by incompatible extensions (V1, V3). On top of that, ecosystem support is partial: Pillow and NumPy ship free-threaded wheels, OpenCV has no stable free-threaded release (B.C4). So 'threads are now fine for CPU work' holds only on a build nobody has confirmed is in production, and only with some libraries. A thread pool saves only the duplicated interpreter and import overhead. Per-task image buffers stay the same (V4, V5). Whether the swap is worth it depends on an RSS breakdown nobody has measured, and O3 is the step that stays safe without that fact. With the imaging library unspecified, threads can make throughput collapse when any stage holds the GIL. V5 measured pure-Python work at 9.9s on threads against 6.9s serial and 3.4s on processes. That directly threatens the 'keep throughput' requirement. Process workers keep crash isolation and maxtasksperchild leak recycling, and all four seats named losing these as the main reliability risk of switching to threads.\nWhat the council may be missing: Memory growth may come from glibc malloc arenas and fragmentation rather than from interpreter copies. That growth can get worse with threads, and MALLOC_ARENA_MAX or jemalloc can matter more than the executor choice. The worker may also use Pool-specific APIs (initializer, imap, per-worker caches) or process-global state that doesn't port cleanly to threads. Finally, the real memory problem may be spikes from rare very large inputs, which only dimension limits and streaming address.\nCost if the council is wrong: If O3 is the wrong first move, the team spends a cycle on tuning that saves little, while a thread pool would have removed N-1 interpreter copies (roughly 20-90 MB each) at the same throughput. The cost is delay and effort, not an outage. If the council had instead endorsed O1 and been wrong, throughput could collapse on a GIL-holding stage, or a native decoder crash or leak could take down the whole service. That is why the cautious order was chosen.\nYour call stays the default until you decide otherwise.\n\n### Minority report\n**O1: Replace multiprocessing.Pool with ThreadPoolExecutor on the existing standard-GIL interpreter, gated by a production benchmark, with bounded in-flight work and supervisor restarts.** (Claude fable): I still hold O1, gated by one benchmark. The asker's goal is less memory at equal throughput, and O3 cannot deliver that: fewer workers trades throughput for memory, maxtasksperchild and forkserver do not remove the N duplicate interpreters, and on macOS/3.14 (spawn/forkserver default, You.C5) each child is a fresh ~90 MB process. Threads remove exactly that duplication, which is what the others' own records show: V4 (interpreter+imports ~30 MB per process before any buffers) and V5 (eight distinct pids, each ~22 MB idle) measure the cost that O3 keeps paying. My run (You.C4) is the missing throughput half: stock 3.13.3, Pillow 11.3.0, ThreadPoolExecutor(8) and spawn Pool(8) both 8.5 img/s, 6.8x serial, threads in one ~180 MB process versus parent plus eight ~90 MB children. That is not luck; Pillow's resampling releases the GIL in C (You.C3, Resample.c ImagingSectionEnter = PyEval_SaveThread), as do OpenCV and pyvips. The unspecified library is a reason to measure, not to keep processes. V5's cpu_test (pure-Python loop, threads slower than serial) is the majority's strongest exhibit, but it measures a workload that is not image resizing. Do not touch free-threaded builds (V1, V3, You.C2): unnecessary and costlier. Required alongside: bound in-flight images, MAX_IMAGE_PIXELS, supervisor restarts (You.C6). I concede to O3 if, on the production interpreter and library with representative images, ThreadPoolExecutor delivers materially lower throughput than Pool (a GIL-holding stage or Python-level pixel work), or if native decoder crashes are a known recurring event that only process isolation contains.\nNot adopted because: The tally leads with O3, and no verification record shows that a load-bearing claim behind O3 is false. V4 and V5 confirm that the thread-pool saving is real but depends on the RSS breakdown and on the workload releasing the GIL. The imaging library, the production build and the RSS breakdown are all unspecified. The minority's throughput evidence is one seat's benchmark on Pillow, not a verification record, so switching to threads is premature as the first step. The minority's point that some O3 levers don't remove the duplicated interpreters is accepted and folded in: the recommendation drops worker cuts below the core count and keeps a benchmark-gated thread trial as step 3.\nIt would be right if: The production benchmark (same job, production interpreter and imaging library, representative images) shows ThreadPoolExecutor matching Pool throughput, the measured breakdown shows per-process interpreter/import baseline dominating RSS rather than image buffers, and native decoder crashes or leaks are not a recurring event that only process isolation contains.\n\n### Where the council may be wrong\n- The minority is right that maxtasksperchild and start-method changes don't remove the N duplicate interpreters. If baseline dominates RSS, O3's safe levers barely help and the majority has only delayed the effective fix.\n- Three seats measured Pillow resize and JPEG pipelines scaling with threads on the GIL build (4.7x to 6.8x). If production uses Pillow, the throughput risk of threads may be much smaller than the majority implies.\n- Every seat's pre-mortem expects decoded buffers to dominate memory. If that is true, both O3's process tuning and O1's executor swap miss the main lever: reduced-size decode and a cap on in-flight images.\n- The free-threaded ecosystem status (Pillow/NumPy wheels present, no stable OpenCV release) comes from a seat's tracker fetch, not a verification record, and it changes quickly. O2's feasibility may already differ.\n\n### What would change this verdict\n- A production benchmark (production interpreter, imaging library and images) where a bounded ThreadPoolExecutor matches Pool throughput, plus an RSS breakdown showing per-process baseline rather than image buffers dominating, would move the recommendation to the thread-pool alternative.\n- Confirmation that production already runs a free-threaded build with sys._is_gil_enabled() == False after all imports, and that the imaging library and every C extension ship compatible wheels (not true of opencv-python at last check), would make O2 viable.\n- Profiling that shows material Python-level pixel or metadata work in the per-task path would rule out thread-based options entirely and settle on O3.\n\n#### How the council ran\n- Mode: standard. Seats: first_principles (Claude fable): O1: Replace multiprocessing.Pool with concurrent.futures.Thr, high; premise_auditor (Claude opus): Measure first, and don't wait for a free-threaded build. If , medium; practitioner (Claude sonnet): O3: Keep process-based workers but reduce their memory footp, medium; outsider (Claude opus): O3: Keep process-based workers but reduce their memory footp, medium.\n- Blind vote: O1: Replace multiprocessing.Pool with concurrent.f 1, Measure first, and don't wait for a free-threaded  1, O3: Keep process-based workers but reduce their me 1. Final: O1: Replace multiprocessing.Pool with concurrent.f 1, Measure first, and don't wait for a free-threaded  1, O3: Keep process-based workers but reduce their me 2.\n- Claims verified with tools: 5 (2 partly, 3 true).\n- Escalations run: premise_audit, extra_seats, verify, critique, dissent_lead, audit.\n- Diversity: All voting seats were Claude models, so their agreement is one model family's view. Audit: flagged fact_attrition (repaired).\n- Agents: 24.\n- Claude's own view before the council (never shown to the council): Premise is wrong (3.13 default build still has the GIL; free-threading is an opt-in build), but the plan may still work because Pillow releases the GIL during resize; benchmark before switching."
+}
