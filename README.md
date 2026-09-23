@@ -1,5 +1,13 @@
 # council: a multi-model council skill for Claude Code
 
+![Replay of a council run: the question, the stages, then the verdict, premise checks and minority report](demo/council-demo.gif)
+
+_A replay of a real run, sped up (the run took 18m 49s with 20 agents). The question is the run's own, verbatim, shown
+as you would type it (the run itself was started through the workflow's arguments). Stages, models and timing come
+from the run's record, and the report is quoted verbatim from
+[council-workspace/sample-report-gil.md](council-workspace/sample-report-gil.md), with "…" marking every cut. Only the
+typing and pacing are staged. `python3 demo/make_demo.py` regenerates it._
+
 `/council <question>` works out what you are actually asking, then convenes Claude Fable, Opus and
 Sonnet as blind, independent voters, with optional opt-in GPT or Gemini seats. It returns a
 verdict built to be neither a yes-man nor a reflexive no-man:
@@ -59,6 +67,7 @@ evals/evals.json              test prompts, intake args, assertions
 evals/run-evals.js            Workflow script: council vs baseline, graded blind
 evals/to_workspace.py         converts eval output to the skill-creator workspace layout
 council-workspace/            eval results by iteration
+demo/                         demo GIF and the script that renders it from a real run
 install.sh
 ```
 

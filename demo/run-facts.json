@@ -1,0 +1,33 @@
+{
+  "_source": "Real council run wf_0bf3cae4-e9e (2026-09-24), standard mode, started through the workflow's arguments (a smoke test), not typed. The prompt is the run's question_raw verbatim; the \"/council \" prefix is added for display. Stages and models come from the run's process.roster, process.ran, tally and verification; the duration is from the workflow's completion notice (duration_ms 1128818). The report text is council-workspace/sample-report-gil.md, verbatim.",
+  "prompt": "/council I want a second opinion from multiple models, and don't just agree with me: since the GIL is gone in Python 3.13, threading is now fine for CPU-bound work, so I'm going to replace our multiprocessing.Pool image-resizing workers with a ThreadPoolExecutor to cut memory usage. Anything wrong with that plan?",
+  "mode": "standard",
+  "agents": 20,
+  "duration": "18m 49s",
+  "stages": [
+    [
+      "Interpret",
+      "framer (Opus) rewrites it neutrally · blind reader (Sonnet) · reconciler (Sonnet)"
+    ],
+    [
+      "Blind vote",
+      "Fable, Opus, Sonnet vote without seeing each other → 1–1–1 split"
+    ],
+    [
+      "",
+      "premise audit (Sonnet): 2 of your claims checked → both false"
+    ],
+    [
+      "Escalate",
+      "split → extra seat (Opus, no context) → 2–1–1"
+    ],
+    [
+      "",
+      "3 more claims checked with tools · one critique round · dissent lead (Fable)"
+    ],
+    [
+      "Verdict",
+      "non-voting chair (Opus) · audit (Sonnet)"
+    ]
+  ]
+}
