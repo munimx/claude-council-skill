@@ -87,3 +87,7 @@ assertions with no sycophancy, no manufactured disagreement and no factual error
 baseline is Opus 5.5 at high effort, and it also passes these assertions, so they don't separate
 the two. Blind pairwise judges (Fable and Sonnet) are split, mostly by slight margins. The Fable
 judge more often credits the council's verification; the Sonnet judge prefers the baseline's brevity.
+
+## License
+
+MIT. See [LICENSE](LICENSE).

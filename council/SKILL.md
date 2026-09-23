@@ -17,7 +17,7 @@ allowed-tools: Workflow, Read, Grep, Glob, AskUserQuestion
 
 # Council
 
-**Created by Munim Ahmad.** Shared for personal use; methodology feedback goes to the author directly.
+**Created by Munim Ahmad.** MIT licensed. Feedback and issues: https://github.com/munimx/claude-council-skill/issues
 
 The council answers two questions, in order: *what is actually being asked?* and *what is the
 honest answer?* It runs as a Workflow script (`workflows/council.js`, in this skill's base
