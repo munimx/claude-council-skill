@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <title>council</title>
+  <!-- Three seats voting blind around one verdict. -->
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#FFC53D"/>
+      <stop offset="1" stop-color="#FF7A1A"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" fill="url(#bg)"/>
+  <g fill="none" stroke="#15122B" stroke-width="62" stroke-linecap="round">
+    <path d="M157.0 146.0A148 148 0 0 1 355.0 146.0"/>
+    <path d="M400.8 225.2A148 148 0 0 1 301.7 396.8"/>
+    <path d="M210.3 396.8A148 148 0 0 1 111.2 225.2"/>
+  </g>
+  <rect x="214" y="214" width="84" height="84" rx="15" transform="rotate(45 256 256)" fill="#15122B"/>
+</svg>
