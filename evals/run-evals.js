@@ -7,7 +7,7 @@ export const meta = {
   ],
 }
 
-const SKILL_DIR = (args && args.skill_dir) || '/Users/munimahmad/Liftoff/claude-council-skill/council'
+const SKILL_DIR = (args && args.skill_dir) || '/Users/munimahmad/Playground/claude-council-skill/council'
 const EVALS = (args.evals || []).map(e => ({ ...e, args: e.args || e.intake }))
 
 const GRADE = {
