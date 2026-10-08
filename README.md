@@ -107,6 +107,7 @@ To get the most out of it:
 ```
 council/
   SKILL.md                    intake, the call, faithful delivery (what the main session follows)
+  README.md                   buyer-facing README that ships inside the marketplace zip
   workflows/council.js        the council: interpret -> blind vote -> escalate on signals -> chair -> report
   scripts/outside-seat.sh     sandboxed, time-limited one-shot call to opencode / gemini (opt-in only)
   references/evidence.md      why each mechanism exists, with the research behind it
@@ -118,6 +119,7 @@ evals/to_workspace.py         converts eval output to the skill-creator workspac
 council-workspace/            eval results by iteration
 demo/                         demo GIF and the script that renders it from a real run
 install.sh
+package.sh                    builds dist/council.zip for skill marketplaces (e.g. Agensi)
 ```
 
 ## Test

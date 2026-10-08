@@ -10,7 +10,8 @@ description: >-
   a plan, decision or premise, "am I wrong?", "be brutally honest", "don't just agree with me",
   "play devil's advocate", "is this actually a good idea", or wants something checked by more than
   one model, and when an ultracode task hits a judgement call that deserves independent scrutiny.
-  Not for plain lookups nobody asked to scrutinise.
+  Not for plain lookups nobody asked to scrutinise. The full council runs only in Claude Code
+  (Workflow tool).
 argument-hint: "[quick|deep] [--outside[=provider/model,...]] [--interpret-only] <question>"
 allowed-tools: Workflow, Read, Grep, Glob, AskUserQuestion
 ---
@@ -116,9 +117,17 @@ Workflow({ scriptPath: "${CLAUDE_SKILL_DIR}/workflows/council.js", args: { ...ar
 A session keeps the saved workflow it first loaded. After `install.sh` updates it, only new sessions
 run the new version.
 
-If both fail, tell the user the council isn't installed for this session. Running `install.sh`
-from the skill's repository copies the workflow to `~/.claude/workflows/council-run.js`, and a new
-session will pick it up. Do not improvise a council some other way.
+If both fail, the workflow isn't installed for this session. That is expected after a marketplace
+install or a plain copy of the skill folder, which bring the skill but not the saved workflow. Tell
+the user, and offer the one-time setup that the repository's `install.sh` also does: copy the
+workflow into their saved workflows.
+
+```bash
+mkdir -p "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/workflows" && cp "${CLAUDE_SKILL_DIR}/workflows/council.js" "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/workflows/council-run.js"
+```
+
+Run it only if they say yes. It writes that one file and nothing else. A new session picks it up.
+Do not improvise a council some other way.
 
 If the Workflow tool itself is unavailable (for example, you are a subagent), say so in one line and
 give your own answer, clearly labelled as one model's view and not a council verdict. Keep the
